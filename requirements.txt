@@ -1,6 +1,7 @@
 pandas
-pandas_ta
 python-telegram-bot
 flask
 requests
 gunicorn
+numpy==1.24.2
+pandas_ta==0.3.14
