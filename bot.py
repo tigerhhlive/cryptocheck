@@ -411,6 +411,8 @@ def home():
 
 
 if __name__ == '__main__':
-    run_all_systems()
+    from threading import Thread
+
+    Thread(target=run_all_systems).start()  # اجرا در پس‌زمینه
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
