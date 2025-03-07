@@ -55,10 +55,8 @@ def send_telegram_message(message):
 # -------------------------------
 def find_support_resistance(df, window=5):
     try:
-        # center=False تا آخرین ردیف مقدار معتبر داشته باشد
         df['support'] = df['low'].rolling(window=window, center=False).min()
-        df['resistance'] = df['high'].rolling(window=window,
-                                              center=False).max()
+        df['resistance'] = df['high'].rolling(window=window, center=False).max()
         return df
     except Exception as e:
         logging.error("خطا در find_support_resistance: " + str(e))
@@ -84,13 +82,9 @@ def detect_rsi_divergence(df, rsi_period=14):
         df['rsi'] = ta.rsi(df['close'], length=rsi_period)
         if len(df) < 2:
             return None
-        if (df['close'].iloc[-1]
-                > df['close'].iloc[-2]) and (df['rsi'].iloc[-1]
-                                             < df['rsi'].iloc[-2]):
+        if (df['close'].iloc[-1] > df['close'].iloc[-2]) and (df['rsi'].iloc[-1] < df['rsi'].iloc[-2]):
             return "واگرایی نزولی (Bearish Divergence)"
-        elif (df['close'].iloc[-1]
-              < df['close'].iloc[-2]) and (df['rsi'].iloc[-1]
-                                           > df['rsi'].iloc[-2]):
+        elif (df['close'].iloc[-1] < df['close'].iloc[-2]) and (df['rsi'].iloc[-1] > df['rsi'].iloc[-2]):
             return "واگرایی صعودی (Bullish Divergence)"
         return None
     except Exception as e:
@@ -122,10 +116,7 @@ def is_doji(row):
 
 
 def calculate_volume_threshold(candles):
-    volumes = [
-        candle.get('volumefrom', candle.get('volume', 0))
-        for candle in candles[:-1]
-    ]
+    volumes = [candle.get('volumefrom', candle.get('volume', 0)) for candle in candles[:-1]]
     return mean(volumes) * VOLUME_MULTIPLIER
 
 
@@ -135,8 +126,7 @@ def calculate_price_spike(candles):
         return 0, None
     price_changes = []
     for i in range(1, len(close_prices)):
-        change = (close_prices[i] -
-                  close_prices[i - 1]) / close_prices[i - 1] * 100
+        change = (close_prices[i] - close_prices[i - 1]) / close_prices[i - 1] * 100
         price_changes.append(change)
     avg_change = mean(price_changes)
     try:
@@ -147,11 +137,9 @@ def calculate_price_spike(candles):
     current_close = candles[-1]['close']
     current_change = (current_close - previous_close) / previous_close * 100
     spike_type = None
-    if current_change >= PRICE_CHANGE_THRESHOLD and (
-            current_change - avg_change >= STD_MULTIPLIER * change_std):
+    if current_change >= PRICE_CHANGE_THRESHOLD and (current_change - avg_change >= STD_MULTIPLIER * change_std):
         spike_type = 'UP'
-    elif current_change <= -PRICE_CHANGE_THRESHOLD and (
-            avg_change - current_change >= STD_MULTIPLIER * change_std):
+    elif current_change <= -PRICE_CHANGE_THRESHOLD and (avg_change - current_change >= STD_MULTIPLIER * change_std):
         spike_type = 'DOWN'
     return current_change, spike_type
 
@@ -160,8 +148,7 @@ def check_spike(candles):
     if len(candles) < NUM_CANDLES + 1:
         logging.warning("تعداد کندل‌ها کمتر از حد مورد نیاز است.")
         return None, 0
-    current_volume = candles[-1].get('volumefrom',
-                                     candles[-1].get('volume', 0))
+    current_volume = candles[-1].get('volumefrom', candles[-1].get('volume', 0))
     volume_threshold = calculate_volume_threshold(candles)
     volume_spike = current_volume > volume_threshold
     current_price_change, spike_type = calculate_price_spike(candles)
@@ -172,9 +159,6 @@ def check_spike(candles):
 
 # توابع جدید برای تشخیص کندل‌های قدرتمند
 def is_big_green_candle(row, threshold=2.0):
-    """
-    تشخیص کندل سبز قدرتمند: اگر درصد افزایش قیمت از قیمت باز حداقل threshold درصد باشد.
-    """
     try:
         if row['open'] == 0:
             return False
@@ -186,9 +170,6 @@ def is_big_green_candle(row, threshold=2.0):
 
 
 def is_price_rise_above_threshold(df, threshold=2.0):
-    """
-    تشخیص افزایش قیمت بیش از threshold درصد نسبت به کندل قبلی.
-    """
     try:
         if len(df) < 2:
             return False
@@ -221,8 +202,7 @@ def get_bitcoin_data():
         response.raise_for_status()
         data_json = response.json()
         if data_json.get('Response') != 'Success':
-            raise ValueError("خطا در دریافت داده‌ها: " +
-                             data_json.get('Message', 'Unknown error'))
+            raise ValueError("خطا در دریافت داده‌ها: " + data_json.get('Message', 'Unknown error'))
         data = data_json['Data']['Data']
         df = pd.DataFrame(data)
         df['timestamp'] = pd.to_datetime(df['time'], unit='s')
@@ -232,8 +212,7 @@ def get_bitcoin_data():
             'low': 'low',
             'close': 'close',
             'volumeto': 'volume'
-        },
-                  inplace=True)
+        }, inplace=True)
         df = df[['timestamp', 'open', 'high', 'low', 'close', 'volume']]
         return df
     except Exception as e:
@@ -244,47 +223,48 @@ def get_bitcoin_data():
 def monitor_bitcoin():
     global last_alert_time, last_heartbeat_time
     logging.info("شروع نظارت بر BTC/USDT...")
-    send_telegram_message(
-        "سیستم نظارت BTC/USDT فعال شد (کندل‌های 5 دقیقه‌ای، شاخص CCCAGG).")
+    send_telegram_message("سیستم نظارت BTC/USDT فعال شد (کندل‌های 5 دقیقه‌ای، شاخص CCCAGG).")
     last_heartbeat_time = time.time()
     while True:
-        df = get_bitcoin_data()
-        if df.empty or len(df) < 3:
-            logging.info("داده‌های BTC/USDT کافی نیستند.")
-        else:
-            candles = df.to_dict(orient="records")
-            spike_type, price_change = check_spike(candles)
-            if spike_type is not None:
-                current_time = time.time()
-                if (current_time - last_alert_time) >= ALERT_COOLDOWN:
-                    if spike_type == 'UP':
-                        message = (
-                            f"📈 جهش صعودی BTC/USDT تشخیص داده شد!\n"
-                            f"تغییر قیمت: {price_change:.2f}%\n"
-                            f"حجم: {candles[-1].get('volumefrom', candles[-1].get('volume', 'N/A'))}"
-                        )
-                    else:
-                        message = (
-                            f"📉 جهش نزولی BTC/USDT تشخیص داده شد!\n"
-                            f"تغییر قیمت: {price_change:.2f}%\n"
-                            f"حجم: {candles[-1].get('volumefrom', candles[-1].get('volume', 'N/A'))}"
-                        )
-                    send_telegram_message(message)
-                    logging.info(message)
-                    last_alert_time = current_time
-                else:
-                    logging.info(
-                        "سیگنال BTC/USDT یافت شد ولی دوره‌ی Cooldown فعال است."
-                    )
+        try:
+            df = get_bitcoin_data()
+            if df.empty or len(df) < 3:
+                logging.info("داده‌های BTC/USDT کافی نیستند.")
             else:
-                logging.info(
-                    "هیچ سیگنال BTC/USDT یافت نشد. تغییر قیمت: {:.2f}%".format(
-                        price_change))
-        if time.time() - last_heartbeat_time >= HEARTBEAT_INTERVAL:
-            send_telegram_message(
-                "سیستم نظارت BTC/USDT همچنان فعال است (CCCAGG).")
-            last_heartbeat_time = time.time()
-        time.sleep(300)  # بررسی هر 5 دقیقه
+                candles = df.to_dict(orient="records")
+                spike_type, price_change = check_spike(candles)
+                if spike_type is not None:
+                    current_time = time.time()
+                    if (current_time - last_alert_time) >= ALERT_COOLDOWN:
+                        if spike_type == 'UP':
+                            message = (
+                                f"📈 جهش صعودی BTC/USDT تشخیص داده شد!\n"
+                                f"تغییر قیمت: {price_change:.2f}%\n"
+                                f"حجم: {candles[-1].get('volumefrom', candles[-1].get('volume', 'N/A'))}"
+                            )
+                        else:
+                            message = (
+                                f"📉 جهش نزولی BTC/USDT تشخیص داده شد!\n"
+                                f"تغییر قیمت: {price_change:.2f}%\n"
+                                f"حجم: {candles[-1].get('volumefrom', candles[-1].get('volume', 'N/A'))}"
+                            )
+                        send_telegram_message(message)
+                        logging.info(message)
+                        last_alert_time = current_time
+                    else:
+                        logging.info("سیگنال BTC/USDT یافت شد ولی دوره‌ی Cooldown فعال است.")
+                else:
+                    logging.info("هیچ سیگنال BTC/USDT یافت نشد. تغییر قیمت: {:.2f}%".format(price_change))
+            
+            if time.time() - last_heartbeat_time >= HEARTBEAT_INTERVAL:
+                send_telegram_message("سیستم نظارت BTC/USDT همچنان فعال است (CCCAGG).")
+                last_heartbeat_time = time.time()
+            
+            logging.info("چرخه نظارت BTC/USDT تکمیل شد.")
+            time.sleep(300)
+        except Exception as ex:
+            logging.error("خطای غیرمنتظره در monitor_bitcoin: " + str(ex))
+            time.sleep(60)  # در صورت بروز خطا، 60 ثانیه صبر کنید و دوباره تلاش کنید
 
 
 # -------------------------------
@@ -301,8 +281,7 @@ def get_price_data(symbol, timeframe, limit=100):
             aggregate = 1  # هر 1 ساعت
             limit = 24  # 24 داده برای 1 روز
         else:
-            raise ValueError(
-                "تایم‌فریم پشتیبانی نمی‌شود. فقط '1h' یا '1d' مجاز است.")
+            raise ValueError("تایم‌فریم پشتیبانی نمی‌شود. فقط '1h' یا '1d' مجاز است.")
 
         params = {
             'fsym': symbol.split('/')[0],
@@ -321,12 +300,11 @@ def get_price_data(symbol, timeframe, limit=100):
             'low': 'low',
             'close': 'close',
             'volumeto': 'volume'
-        },
-                  inplace=True)
+        }, inplace=True)
         df = df[['timestamp', 'open', 'high', 'low', 'close', 'volume']]
         return df
     except Exception as e:
-        print(f"خطا در get_price_data برای {symbol}: {e}")
+        logging.error(f"خطا در get_price_data برای {symbol}: {e}")
         return pd.DataFrame()
 
 
@@ -342,7 +320,6 @@ def analyze_symbol(symbol, timeframe='1h'):
     pin_bar = df.apply(is_pin_bar, axis=1).iloc[-1]
     doji = df.apply(is_doji, axis=1).iloc[-1]
 
-    # شرایط جدید: کندل سبز قدرتمند و افزایش قیمت بیش از 2٪ نسبت به کندل قبلی
     big_green = df.apply(is_big_green_candle, axis=1).iloc[-1]
     price_rise_2pct = is_price_rise_above_threshold(df, 2.0)
 
@@ -379,25 +356,29 @@ def multi_symbol_analysis_loop():
         'SHIB/USDT'
     ]
     while True:
-        for symbol in symbols:
-            logging.info(f"در حال بررسی {symbol}...")
-            try:
-                analysis_message = analyze_symbol(symbol, '1h')
-                logging.info(
-                    f"نتیجه تحلیل {symbol}: {analysis_message.strip()}")
-                if "سیگنال:" in analysis_message and "سیگنالی یافت نشد" not in analysis_message:
-                    send_telegram_message(analysis_message)
-            except Exception as e:
-                logging.error(f"خطا در بررسی {symbol}: {e}")
-        time.sleep(300)  # هر 5 دقیقه
+        try:
+            for symbol in symbols:
+                logging.info(f"در حال بررسی {symbol}...")
+                try:
+                    analysis_message = analyze_symbol(symbol, '1h')
+                    logging.info(f"نتیجه تحلیل {symbol}: {analysis_message.strip()}")
+                    if "سیگنال:" in analysis_message and "سیگنالی یافت نشد" not in analysis_message:
+                        send_telegram_message(analysis_message)
+                except Exception as e:
+                    logging.error(f"خطا در بررسی {symbol}: {e}")
+            logging.info("چرخه تحلیل چند ارز تکمیل شد.")
+            time.sleep(300)
+        except Exception as ex:
+            logging.error("خطای غیرمنتظره در multi_symbol_analysis_loop: " + str(ex))
+            time.sleep(60)
 
 
 # -------------------------------
 # اجرای دو سیستم به صورت مجزا
 # -------------------------------
 def run_all_systems():
-    btc_thread = threading.Thread(target=monitor_bitcoin)
-    multi_thread = threading.Thread(target=multi_symbol_analysis_loop)
+    btc_thread = threading.Thread(target=monitor_bitcoin, daemon=True)
+    multi_thread = threading.Thread(target=multi_symbol_analysis_loop, daemon=True)
     btc_thread.start()
     multi_thread.start()
 
@@ -412,7 +393,6 @@ def home():
 
 if __name__ == '__main__':
     from threading import Thread
-
-    Thread(target=run_all_systems).start()  # اجرا در پس‌زمینه
+    Thread(target=run_all_systems, daemon=True).start()  # اجرا در پس‌زمینه
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
