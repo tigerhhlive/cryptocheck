@@ -20,12 +20,12 @@ TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
 # -------------------------------
 # تنظیمات تحلیل برای BTC/USDT
 # -------------------------------
-NUM_CANDLES = 60           # تعداد کندل‌های مورد استفاده (داده‌های 5 دقیقه‌ای)
-VOLUME_MULTIPLIER = 1.2    # ضریب حجم: کمی کمتر سخت‌گیرانه (قبلا 1.5 بود)
-PRICE_CHANGE_THRESHOLD = 0.8  # تغییر درصدی قیمت مورد نیاز (کمی کاهش دادیم تا جهش راحت‌تر شناسایی شود)
-STD_MULTIPLIER = 1.0       # ضریب انحراف معیار (قبلا 1.5 بود)
-ALERT_COOLDOWN = 300       # فاصله زمانی بین هشدارها (۵ دقیقه)
-HEARTBEAT_INTERVAL = 3600  # پیام هارت‌بییت (۱ ساعت)
+NUM_CANDLES = 60            # تعداد کندل‌های مورد استفاده (داده‌های 5 دقیقه‌ای)
+VOLUME_MULTIPLIER = 1.2     # ضریب حجم: کمی کمتر سخت‌گیرانه (قبلاً 1.5 بود)
+PRICE_CHANGE_THRESHOLD = 0.8  # تغییر درصدی قیمت مورد نیاز (کمی کاهش داده شده)
+STD_MULTIPLIER = 1.0        # ضریب انحراف معیار (قبلاً 1.5 بود)
+ALERT_COOLDOWN = 300        # فاصله زمانی بین هشدارها (۵ دقیقه)
+HEARTBEAT_INTERVAL = 3600   # پیام هارت‌بییت (۱ ساعت)
 
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(levelname)s - %(message)s')
@@ -77,17 +77,62 @@ def find_trendline(df):
         return "روند خنثی"
 
 
-def detect_rsi_divergence(df, rsi_period=14):
+def detect_rsi_divergence(df, rsi_period=14, pivot_size=2):
+    """
+    تشخیص واگرایی RSI با استفاده از شناسایی قله‌ها و دره‌ها در یک پنجره از کندل‌ها.
+    pivot_size: تعداد کندل‌های قبل و بعد از نقطه برای تعیین قله یا دره.
+    این پیاده‌سازی ساده، در بازه 10 کندل آخر را بررسی می‌کند.
+    """
     try:
         df['rsi'] = ta.rsi(df['close'], length=rsi_period)
-        if len(df) < 2:
+        window_size = 10
+        if len(df) < window_size:
             return None
-        # واگرایی نزولی
-        if (df['close'].iloc[-1] > df['close'].iloc[-2]) and (df['rsi'].iloc[-1] < df['rsi'].iloc[-2]):
-            return "واگرایی نزولی (Bearish Divergence)"
-        # واگرایی صعودی
-        elif (df['close'].iloc[-1] < df['close'].iloc[-2]) and (df['rsi'].iloc[-1] > df['rsi'].iloc[-2]):
-            return "واگرایی صعودی (Bullish Divergence)"
+        df_window = df.iloc[-window_size:].reset_index(drop=True)
+        
+        # توابع کمکی برای یافتن قله‌ها و دره‌ها
+        def find_peaks(series, left, right):
+            peaks = []
+            for i in range(left, len(series)-right):
+                window = series[i-left:i+right+1]
+                if series[i] == max(window):
+                    peaks.append(i)
+            return peaks
+
+        def find_valleys(series, left, right):
+            valleys = []
+            for i in range(left, len(series)-right):
+                window = series[i-left:i+right+1]
+                if series[i] == min(window):
+                    valleys.append(i)
+            return valleys
+
+        price_peaks = find_peaks(df_window['close'].tolist(), pivot_size, pivot_size)
+        price_valleys = find_valleys(df_window['close'].tolist(), pivot_size, pivot_size)
+        rsi_peaks = find_peaks(df_window['rsi'].tolist(), pivot_size, pivot_size)
+        rsi_valleys = find_valleys(df_window['rsi'].tolist(), pivot_size, pivot_size)
+
+        # مثال ساده: بررسی آخرین دو قله برای واگرایی نزولی
+        if len(price_peaks) >= 2 and len(rsi_peaks) >= 2:
+            last_price_peak = price_peaks[-1]
+            prev_price_peak = price_peaks[-2]
+            if df_window['close'].iloc[last_price_peak] > df_window['close'].iloc[prev_price_peak]:
+                # اگر قله RSI در آخرین دو قله در جهت مخالف تغییر کرده باشد
+                last_rsi_peak = rsi_peaks[-1]
+                prev_rsi_peak = rsi_peaks[-2]
+                if df_window['rsi'].iloc[last_rsi_peak] < df_window['rsi'].iloc[prev_rsi_peak]:
+                    return "واگرایی نزولی (Bearish Divergence)"
+
+        # بررسی آخرین دو دره برای واگرایی صعودی
+        if len(price_valleys) >= 2 and len(rsi_valleys) >= 2:
+            last_price_valley = price_valleys[-1]
+            prev_price_valley = price_valleys[-2]
+            if df_window['close'].iloc[last_price_valley] < df_window['close'].iloc[prev_price_valley]:
+                last_rsi_valley = rsi_valleys[-1]
+                prev_rsi_valley = rsi_valleys[-2]
+                if df_window['rsi'].iloc[last_rsi_valley] > df_window['rsi'].iloc[prev_rsi_valley]:
+                    return "واگرایی صعودی (Bullish Divergence)"
+
         return None
     except Exception as e:
         logging.error("خطا در detect_rsi_divergence: " + str(e))
@@ -121,7 +166,6 @@ def is_doji(row):
 # توابع تشخیص جهش (Spike)
 # -------------------------------
 def calculate_volume_threshold(candles):
-    # میانگین حجم کندل‌های قبلی
     volumes = [candle.get('volumefrom', candle.get('volume', 0)) for candle in candles[:-1]]
     return mean(volumes) * VOLUME_MULTIPLIER
 
@@ -129,55 +173,39 @@ def calculate_price_spike(candles):
     close_prices = [candle['close'] for candle in candles[:-1]]
     if len(close_prices) < 2:
         return 0, None
-
-    # محاسبه درصد تغییر قیمت کندل‌های قبلی
     price_changes = []
     for i in range(1, len(close_prices)):
         change = (close_prices[i] - close_prices[i - 1]) / close_prices[i - 1] * 100
         price_changes.append(change)
-
     avg_change = mean(price_changes)
     try:
         change_std = stdev(price_changes)
     except:
         change_std = 0
-
-    # درصد تغییر کندل فعلی نسبت به کندل قبلی
     previous_close = candles[-2]['close']
     current_close = candles[-1]['close']
     current_change = (current_close - previous_close) / previous_close * 100
-
     spike_type = None
-    # شرط صعودی
     if current_change >= PRICE_CHANGE_THRESHOLD and (current_change - avg_change >= STD_MULTIPLIER * change_std):
         spike_type = 'UP'
-    # شرط نزولی
     elif current_change <= -PRICE_CHANGE_THRESHOLD and (avg_change - current_change >= STD_MULTIPLIER * change_std):
         spike_type = 'DOWN'
-
     return current_change, spike_type
-
 
 def check_spike(candles):
     if len(candles) < NUM_CANDLES + 1:
         logging.warning("تعداد کندل‌ها کمتر از حد مورد نیاز است.")
         return None, 0
-
     current_volume = candles[-1].get('volumefrom', candles[-1].get('volume', 0))
     volume_threshold = calculate_volume_threshold(candles)
     volume_spike = current_volume > volume_threshold
-
     current_price_change, spike_type = calculate_price_spike(candles)
-
     if volume_spike and spike_type is not None:
         return spike_type, current_price_change
-
-    # اگر سیگنال صادر نشده، در لاگ ذکر کنیم
     if not volume_spike:
-        logging.info(f"حجم برای جهش کافی نبود. حجم فعلی: {current_volume:.2f}, آستانه: {volume_threshold:.2f}")
+        logging.info(f"حجم کافی نبود. حجم: {current_volume:.2f}, آستانه: {volume_threshold:.2f}")
     if spike_type is None:
-        logging.info(f"تغییر قیمت ({current_price_change:.2f}%) در محدوده‌ی جهش نبود یا انحراف معیار کافی نبوده است.")
-
+        logging.info(f"تغییر قیمت ({current_price_change:.2f}%) در محدوده جهش نبود یا انحراف معیار کافی نبود.")
     return None, current_price_change
 
 
@@ -185,9 +213,6 @@ def check_spike(candles):
 # توابع جدید برای تشخیص کندل‌های قدرتمند
 # -------------------------------
 def is_big_green_candle(row, threshold=2.0):
-    """
-    تشخیص کندل سبز قدرتمند: اگر درصد افزایش قیمت از قیمت باز حداقل threshold درصد باشد.
-    """
     try:
         if row['open'] == 0:
             return False
@@ -197,11 +222,7 @@ def is_big_green_candle(row, threshold=2.0):
         logging.error(f"خطا در is_big_green_candle: {e}")
         return False
 
-
 def is_price_rise_above_threshold(df, threshold=2.0):
-    """
-    تشخیص افزایش قیمت بیش از threshold درصد نسبت به کندل قبلی.
-    """
     try:
         if len(df) < 2:
             return False
@@ -225,7 +246,7 @@ def get_bitcoin_data():
         'fsym': 'BTC',
         'tsym': 'USDT',
         'limit': NUM_CANDLES,
-        'aggregate': 5,  # هر کندل = 5 دقیقه
+        'aggregate': 5,
         'e': 'CCCAGG',
         'api_key': CRYPTOCOMPARE_API_KEY
     }
@@ -251,13 +272,11 @@ def get_bitcoin_data():
         logging.error("خطا در get_bitcoin_data: " + str(e))
         return pd.DataFrame()
 
-
 def monitor_bitcoin():
     global last_alert_time, last_heartbeat_time
     logging.info("شروع نظارت بر BTC/USDT...")
     send_telegram_message("سیستم نظارت BTC/USDT فعال شد (کندل‌های 5 دقیقه‌ای، شاخص CCCAGG).")
     last_heartbeat_time = time.time()
-
     while True:
         try:
             df = get_bitcoin_data()
@@ -266,7 +285,6 @@ def monitor_bitcoin():
             else:
                 candles = df.to_dict(orient="records")
                 spike_type, price_change = check_spike(candles)
-
                 if spike_type is not None:
                     current_time = time.time()
                     if (current_time - last_alert_time) >= ALERT_COOLDOWN:
@@ -289,15 +307,11 @@ def monitor_bitcoin():
                         logging.info("سیگنال BTC/USDT یافت شد ولی دوره‌ی Cooldown فعال است.")
                 else:
                     logging.info(f"هیچ سیگنال BTC/USDT یافت نشد. تغییر قیمت: {price_change:.2f}%")
-
-            # هارت‌بییت
             if time.time() - last_heartbeat_time >= HEARTBEAT_INTERVAL:
                 send_telegram_message("سیستم نظارت BTC/USDT همچنان فعال است (CCCAGG).")
                 last_heartbeat_time = time.time()
-
             logging.info("چرخه نظارت BTC/USDT تکمیل شد.")
             time.sleep(300)
-
         except Exception as ex:
             logging.error("خطای غیرمنتظره در monitor_bitcoin: " + str(ex))
             time.sleep(60)
@@ -310,15 +324,14 @@ def get_price_data(symbol, timeframe, limit=100):
     try:
         if timeframe == '1h':
             url = "https://min-api.cryptocompare.com/data/v2/histominute"
-            aggregate = 1  # هر 1 دقیقه
-            limit = 60     # 60 داده برای 1 ساعت
+            aggregate = 1
+            limit = 60
         elif timeframe == '1d':
             url = "https://min-api.cryptocompare.com/data/v2/histohour"
-            aggregate = 1  # هر 1 ساعت
-            limit = 24     # 24 داده برای 1 روز
+            aggregate = 1
+            limit = 24
         else:
             raise ValueError("تایم‌فریم پشتیبانی نمی‌شود. فقط '1h' یا '1d' مجاز است.")
-
         params = {
             'fsym': symbol.split('/')[0],
             'tsym': symbol.split('/')[1],
@@ -343,48 +356,31 @@ def get_price_data(symbol, timeframe, limit=100):
         logging.error(f"خطا در get_price_data برای {symbol}: {e}")
         return pd.DataFrame()
 
-
 def analyze_symbol(symbol, timeframe='1h'):
     df = get_price_data(symbol, timeframe)
     if df.empty or len(df) < 3:
         return f"تحلیل بازار برای {symbol}: داده‌های کافی دریافت نشد."
-
-    # حمایت/مقاومت و روند
     df = find_support_resistance(df)
     trend = find_trendline(df)
-
-    # RSI و واگرایی
     divergence = detect_rsi_divergence(df)
     rsi_val = df['rsi'].iloc[-1] if 'rsi' in df.columns else None
-
-    # الگوهای کندلی
     pin_bar = df.apply(is_pin_bar, axis=1).iloc[-1]
     doji = df.apply(is_doji, axis=1).iloc[-1]
-
-    # شرایط جدید: کندل سبز قدرتمند و افزایش قیمت بیش از 2٪ نسبت به کندل قبلی
     big_green = df.apply(is_big_green_candle, axis=1).iloc[-1]
     price_rise_2pct = is_price_rise_above_threshold(df, 2.0)
-
     signal = "سیگنالی یافت نشد"
-    # اگر Pin Bar و RSI زیر 30 => سیگنال Long
     if pin_bar and rsi_val is not None and rsi_val < 30:
         signal = "ورود به پوزیشن Long (Pin Bar + RSI زیر 30)"
-    # اگر Pin Bar و RSI بالای 70 => سیگنال Short
     elif pin_bar and rsi_val is not None and rsi_val > 70:
         signal = "ورود به پوزیشن Short (Pin Bar + RSI بالای 70)"
-    # اگر دوجی => فقط اطلاع‌دهی
     elif doji:
         signal = "الگوی دوجی شناسایی شد"
-    # اگر واگرایی داشت => هشدار واگرایی
     elif divergence:
         signal = f"واگرایی شناسایی شد: {divergence}"
-    # اگر کندل سبز قدرتمند
     elif big_green:
         signal = "کندل صعودی قدرتمند شناسایی شد (Big Green Candle)"
-    # اگر افزایش قیمت بیش از 2٪
     elif price_rise_2pct:
         signal = "افزایش قیمت بیش از ۲٪ در کندل اخیر"
-
     message = f"""
 تحلیل بازار برای {symbol}:
 - قیمت فعلی: {df['close'].iloc[-1]}
@@ -395,7 +391,6 @@ def analyze_symbol(symbol, timeframe='1h'):
 - سیگنال: {signal}
 """
     return message
-
 
 def multi_symbol_analysis_loop():
     symbols = [
@@ -410,7 +405,6 @@ def multi_symbol_analysis_loop():
                 try:
                     analysis_message = analyze_symbol(symbol, '1h')
                     logging.info(f"نتیجه تحلیل {symbol}: {analysis_message.strip()}")
-                    # اگر در پیام، عبارت "سیگنال:" وجود داشت و "سیگنالی یافت نشد" نبود، پیام به تلگرام ارسال می‌کنیم
                     if "سیگنال:" in analysis_message and "سیگنالی یافت نشد" not in analysis_message:
                         send_telegram_message(analysis_message)
                 except Exception as e:
@@ -421,7 +415,6 @@ def multi_symbol_analysis_loop():
             logging.error("خطای غیرمنتظره در multi_symbol_analysis_loop: " + str(ex))
             time.sleep(60)
 
-
 # -------------------------------
 # اجرای دو سیستم به صورت مجزا
 # -------------------------------
@@ -431,7 +424,6 @@ def run_all_systems():
     btc_thread.start()
     multi_thread.start()
 
-
 # -------------------------------
 # روت ساده Flask برای نگهداری سرویس (برای UptimeRobot)
 # -------------------------------
@@ -439,11 +431,8 @@ def run_all_systems():
 def home():
     return "I'm alive!"
 
-
 if __name__ == '__main__':
     from threading import Thread
-    # اجرای سیستم‌ها در پس‌زمینه
     Thread(target=run_all_systems, daemon=True).start()
-    # اجرای Flask
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
