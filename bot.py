@@ -24,7 +24,7 @@ NUM_CANDLES = 60            # تعداد کندل‌های مورد استفاد
 VOLUME_MULTIPLIER = 1.2     # ضریب حجم: کمی کمتر سخت‌گیرانه (قبلاً 1.5 بود)
 PRICE_CHANGE_THRESHOLD = 0.8  # تغییر درصدی قیمت مورد نیاز (کمی کاهش داده شده)
 STD_MULTIPLIER = 1.0        # ضریب انحراف معیار (قبلاً 1.5 بود)
-ALERT_COOLDOWN = 300        # فاصله زمانی بین هشدارها (۵ دقیقه)
+ALERT_COOLDOWN = 900        # فاصله زمانی بین هشدارها (۵ دقیقه)
 HEARTBEAT_INTERVAL = 3600   # پیام هارت‌بییت (۱ ساعت)
 
 logging.basicConfig(level=logging.INFO,
