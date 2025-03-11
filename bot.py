@@ -8,6 +8,9 @@ import pandas as pd
 import pandas_ta as ta
 from flask import Flask
 
+# -------------------------------
+# ساخت Flask App
+# -------------------------------
 app = Flask(__name__)
 
 # -------------------------------
@@ -27,18 +30,36 @@ STD_MULTIPLIER = 1.0
 ALERT_COOLDOWN = 900        # فاصله زمانی بین هشدارها (15 دقیقه)
 HEARTBEAT_INTERVAL = 3600   # پیام هارت‌بییت (۱ ساعت)
 
-logging.basicConfig(level=logging.INFO,
-                    format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 
 last_alert_time = 0
 last_heartbeat_time = 0
 
 # =============================================================================
+# تابع ارسال پیام به تلگرام
+# =============================================================================
+def send_telegram_message(message):
+    """ارسال پیام متنی به تلگرام."""
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
+    try:
+        response = requests.post(url, json=payload)
+        if response.status_code == 200:
+            logging.info("پیام به تلگرام ارسال شد: " + message)
+        else:
+            logging.error(f"خطا در ارسال پیام تلگرام: {response.text}")
+    except Exception as e:
+        logging.error(f"خطا در ارسال پیام تلگرام: {e}")
+
+# =============================================================================
 # توابع پیشرفته تحلیل تکنیکال
 # =============================================================================
 
-# 1) تشخیص دقیق دوجی
 def identify_doji_type(row, body_threshold=0.1, gravestone_threshold=0.6, dragonfly_threshold=0.6):
+    """تشخیص انواع دوجی (Gravestone, Dragonfly, Long-legged, Standard)."""
     high = row['high']
     low = row['low']
     op = row['open']
@@ -74,8 +95,8 @@ def identify_doji_type(row, body_threshold=0.1, gravestone_threshold=0.6, dragon
     # در غیر این صورت، دوجی استاندارد
     return "standard"
 
-# 2) تشخیص دقیق پین‌بار
 def identify_pin_bar(row, body_max_ratio=0.3, tail_min_ratio=0.6):
+    """تشخیص پین‌بار صعودی (bullish_pin) یا نزولی (bearish_pin)."""
     high = row['high']
     low = row['low']
     op = row['open']
@@ -91,13 +112,13 @@ def identify_pin_bar(row, body_max_ratio=0.3, tail_min_ratio=0.6):
     if body_size > body_max_ratio * candle_range:
         return None
 
-    # پین‌بار صعودی: سایه پایینی بلند، سایه بالایی کوتاه، close > open
+    # پین‌بار صعودی
     if (lower_shadow >= tail_min_ratio * candle_range and
         upper_shadow <= 0.1 * candle_range and
         cl > op):
         return "bullish_pin"
 
-    # پین‌بار نزولی: سایه بالایی بلند، سایه پایینی کوتاه، close < open
+    # پین‌بار نزولی
     if (upper_shadow >= tail_min_ratio * candle_range and
         lower_shadow <= 0.1 * candle_range and
         cl < op):
@@ -105,11 +126,13 @@ def identify_pin_bar(row, body_max_ratio=0.3, tail_min_ratio=0.6):
 
     return None
 
-# 3) تشخیص واگرایی پیشرفته
 def detect_advanced_divergence(df, rsi_period=14, pivot_size=3,
                                price_diff_threshold=1.0,  # درصد اختلاف قیمت
                                rsi_diff_threshold=5.0,    # اختلاف RSI (واحد)
                                rsi_zone_filter=True):
+    """
+    تشخیص واگرایی پیشرفته با حداقل اختلاف قیمت و RSI و فیلتر محدوده RSI.
+    """
     df['rsi'] = ta.rsi(df['close'], length=rsi_period)
     window_size = 20
     if len(df) < window_size:
@@ -143,8 +166,10 @@ def detect_advanced_divergence(df, rsi_period=14, pivot_size=3,
         prev_price_peak = price_peaks[-2]
         last_rsi_peak = rsi_peaks[-1]
         prev_rsi_peak = rsi_peaks[-2]
+
         price_diff_percent = (df_window['close'].iloc[last_price_peak] - df_window['close'].iloc[prev_price_peak]) / df_window['close'].iloc[prev_price_peak] * 100
         rsi_diff = df_window['rsi'].iloc[last_rsi_peak] - df_window['rsi'].iloc[prev_rsi_peak]
+
         if price_diff_percent >= price_diff_threshold and rsi_diff <= -rsi_diff_threshold:
             if (not rsi_zone_filter) or (df_window['rsi'].iloc[last_rsi_peak] > 60):
                 return "واگرایی نزولی (Bearish Divergence)"
@@ -155,14 +180,17 @@ def detect_advanced_divergence(df, rsi_period=14, pivot_size=3,
         prev_price_valley = price_valleys[-2]
         last_rsi_valley = rsi_valleys[-1]
         prev_rsi_valley = rsi_valleys[-2]
+
         price_diff_percent = (df_window['close'].iloc[last_price_valley] - df_window['close'].iloc[prev_price_valley]) / df_window['close'].iloc[prev_price_valley] * 100
         rsi_diff = df_window['rsi'].iloc[last_rsi_valley] - df_window['rsi'].iloc[prev_rsi_valley]
+
         if price_diff_percent <= -price_diff_threshold and rsi_diff >= rsi_diff_threshold:
             if (not rsi_zone_filter) or (df_window['rsi'].iloc[last_rsi_valley] < 40):
                 return "واگرایی صعودی (Bullish Divergence)"
     return None
 
 def find_support_resistance(df, window=5):
+    """محاسبه سطوح حمایت و مقاومت با رولینگ مین/مکس."""
     try:
         df['support'] = df['low'].rolling(window=window).min()
         df['resistance'] = df['high'].rolling(window=window).max()
@@ -172,6 +200,7 @@ def find_support_resistance(df, window=5):
         return df
 
 def find_trendline(df):
+    """تشخیص روند ساده بر اساس آخرین سه کندل."""
     try:
         if len(df) < 3:
             return "روند خنثی"
@@ -185,6 +214,7 @@ def find_trendline(df):
         return "روند خنثی"
 
 def is_big_green_candle(row, threshold=2.0):
+    """تشخیص کندل سبز قدرتمند با افزایش حداقل threshold% در بدنه."""
     try:
         if row['open'] == 0:
             return False
@@ -195,6 +225,7 @@ def is_big_green_candle(row, threshold=2.0):
         return False
 
 def is_price_rise_above_threshold(df, threshold=2.0):
+    """آیا تغییر قیمت کندل آخر نسبت به کندل قبل بیش از threshold% است؟"""
     try:
         if len(df) < 2:
             return False
@@ -260,6 +291,7 @@ def check_spike(candles):
 # =============================================================================
 
 def get_bitcoin_data():
+    """دریافت داده BTC/USDT از CryptoCompare با کندل‌های 15 دقیقه."""
     url = "https://min-api.cryptocompare.com/data/v2/histominute"
     params = {
         'fsym': 'BTC',
@@ -292,6 +324,7 @@ def get_bitcoin_data():
         return pd.DataFrame()
 
 def get_symbol_data(symbol, timeframe, limit=60):
+    """دریافت داده سایر نمادها با تایم‌فریم مشخص از CryptoCompare."""
     try:
         if timeframe == '15m':
             url = "https://min-api.cryptocompare.com/data/v2/histominute"
@@ -307,9 +340,18 @@ def get_symbol_data(symbol, timeframe, limit=60):
             limit = 24
         else:
             raise ValueError("تایم‌فریم پشتیبانی نمی‌شود. فقط '15m'، '1h' یا '1d' مجاز است.")
+
+        # اگر نماد به صورت BTCUSDT باشد، fsym = BTC و tsym = USDT
+        if symbol.endswith("USDT"):
+            fsym = symbol[:-4]
+            tsym = "USDT"
+        else:
+            # اگر شکل دیگری مثل "BTC/USDT" بود
+            fsym, tsym = symbol.split('/')
+
         params = {
-            'fsym': symbol[:-4] if symbol.endswith("USDT") else symbol.split('/')[0],
-            'tsym': "USDT" if symbol.endswith("USDT") else symbol.split('/')[1],
+            'fsym': fsym,
+            'tsym': tsym,
             'limit': limit,
             'aggregate': aggregate,
             'api_key': CRYPTOCOMPARE_API_KEY
@@ -409,9 +451,10 @@ def analyze_symbol(symbol, timeframe='15m'):
     # 5) تعیین سیگنال
     signal = "سیگنالی یافت نشد"
 
-    # اول بررسی پین‌بار با شرایط جدید RSI
+    # شرط پین‌بار صعودی با RSI > 30
     if pin_bar == "bullish_pin" and rsi_val is not None and rsi_val > 30:
         signal = "ورود به پوزیشن Long (Bullish Pin Bar + RSI بالای 30)"
+    # شرط پین‌بار نزولی با RSI < 70
     elif pin_bar == "bearish_pin" and rsi_val is not None and rsi_val < 70:
         signal = "ورود به پوزیشن Short (Bearish Pin Bar + RSI زیر 70)"
     elif latest_doji is not None:
