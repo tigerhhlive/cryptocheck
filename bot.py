@@ -58,8 +58,12 @@ def send_telegram_message(message):
 # توابع پیشرفته تحلیل تکنیکال
 # =============================================================================
 
-def identify_doji_type(row, body_threshold=0.1, gravestone_threshold=0.6, dragonfly_threshold=0.6):
-    """تشخیص انواع دوجی (Gravestone, Dragonfly, Long-legged, Standard)."""
+def identify_doji_type(row, body_threshold=0.05, gravestone_threshold=0.7, dragonfly_threshold=0.7):
+    """
+    تشخیص انواع دوجی با تعریف سخت‌گیرانه‌تر:
+    - بدنه کندل حداکثر 5٪ از رنج کندل باشد (body_threshold=0.05)
+    - برای Gravestone و Dragonfly، سایه‌ی اصلی حداقل 70٪ رنج باشد
+    """
     high = row['high']
     low = row['low']
     op = row['open']
@@ -67,6 +71,7 @@ def identify_doji_type(row, body_threshold=0.1, gravestone_threshold=0.6, dragon
     candle_range = high - low
     if candle_range == 0:
         return None
+
     body_size = abs(cl - op)
     upper_shadow = high - max(op, cl)
     lower_shadow = min(op, cl) - low
@@ -95,8 +100,12 @@ def identify_doji_type(row, body_threshold=0.1, gravestone_threshold=0.6, dragon
     # در غیر این صورت، دوجی استاندارد
     return "standard"
 
-def identify_pin_bar(row, body_max_ratio=0.3, tail_min_ratio=0.6):
-    """تشخیص پین‌بار صعودی (bullish_pin) یا نزولی (bearish_pin)."""
+def identify_pin_bar(row, body_max_ratio=0.25, tail_min_ratio=0.7):
+    """
+    تشخیص پین‌بار صعودی یا نزولی با شرایط سخت‌تر:
+    - بدنه کندل حداکثر 25٪ از رنج کندل باشد
+    - سایه‌ی اصلی حداقل 70٪ از رنج کندل
+    """
     high = row['high']
     low = row['low']
     op = row['open']
@@ -104,6 +113,7 @@ def identify_pin_bar(row, body_max_ratio=0.3, tail_min_ratio=0.6):
     candle_range = high - low
     if candle_range == 0:
         return None
+
     body_size = abs(cl - op)
     upper_shadow = high - max(op, cl)
     lower_shadow = min(op, cl) - low
@@ -127,11 +137,12 @@ def identify_pin_bar(row, body_max_ratio=0.3, tail_min_ratio=0.6):
     return None
 
 def detect_advanced_divergence(df, rsi_period=14, pivot_size=3,
-                               price_diff_threshold=1.0,  # درصد اختلاف قیمت
-                               rsi_diff_threshold=5.0,    # اختلاف RSI (واحد)
+                               price_diff_threshold=1.2,  # درصد اختلاف قیمت (سخت‌تر از 1.0)
+                               rsi_diff_threshold=6.0,    # اختلاف RSI (سخت‌تر از 5.0)
                                rsi_zone_filter=True):
     """
     تشخیص واگرایی پیشرفته با حداقل اختلاف قیمت و RSI و فیلتر محدوده RSI.
+    قیمت باید حداقل 1.2٪ تفاوت داشته باشد و RSI حداقل 6 واحد اختلاف کند.
     """
     df['rsi'] = ta.rsi(df['close'], length=rsi_period)
     window_size = 20
@@ -243,6 +254,8 @@ def is_price_rise_above_threshold(df, threshold=2.0):
 # توابع تشخیص جهش (Spike)
 # =============================================================================
 
+from statistics import mean, stdev
+
 def calculate_volume_threshold(candles):
     volumes = [candle.get('volume', 0) for candle in candles[:-1]]
     return mean(volumes) * VOLUME_MULTIPLIER
@@ -292,6 +305,7 @@ def check_spike(candles):
 
 def get_bitcoin_data():
     """دریافت داده BTC/USDT از CryptoCompare با کندل‌های 15 دقیقه."""
+    import requests
     url = "https://min-api.cryptocompare.com/data/v2/histominute"
     params = {
         'fsym': 'BTC',
@@ -325,6 +339,7 @@ def get_bitcoin_data():
 
 def get_symbol_data(symbol, timeframe, limit=60):
     """دریافت داده سایر نمادها با تایم‌فریم مشخص از CryptoCompare."""
+    import requests
     try:
         if timeframe == '15m':
             url = "https://min-api.cryptocompare.com/data/v2/histominute"
@@ -434,7 +449,7 @@ def analyze_symbol(symbol, timeframe='15m'):
     # 1) محاسبات پایه
     df = find_support_resistance(df)
     trend = find_trendline(df)
-    divergence = detect_advanced_divergence(df)
+    divergence = detect_advanced_divergence(df)  # با تنظیمات سخت‌تر
     rsi_val = df['rsi'].iloc[-1] if 'rsi' in df.columns else None
     
     # 2) تشخیص دوجی پیشرفته
@@ -451,10 +466,10 @@ def analyze_symbol(symbol, timeframe='15m'):
     # 5) تعیین سیگنال
     signal = "سیگنالی یافت نشد"
 
-    # شرط پین‌بار صعودی با RSI > 30
+    # پین‌بار صعودی + RSI > 30
     if pin_bar == "bullish_pin" and rsi_val is not None and rsi_val > 30:
         signal = "ورود به پوزیشن Long (Bullish Pin Bar + RSI بالای 30)"
-    # شرط پین‌بار نزولی با RSI < 70
+    # پین‌بار نزولی + RSI < 70
     elif pin_bar == "bearish_pin" and rsi_val is not None and rsi_val < 70:
         signal = "ورود به پوزیشن Short (Bearish Pin Bar + RSI زیر 70)"
     elif latest_doji is not None:
