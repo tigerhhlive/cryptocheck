@@ -69,8 +69,8 @@ def send_telegram_message(message):
 def identify_doji_type(row, body_threshold=0.05, gravestone_threshold=0.7, dragonfly_threshold=0.7):
     """
     تشخیص انواع دوجی با تعریف سخت‌گیرانه:
-    - بدنه کندل حداکثر 5٪ از رنج کندل باشد
-    - برای Gravestone و Dragonfly، سایه‌ی اصلی حداقل 70٪ از رنج کندل
+    - بدنه کندل حداکثر 5٪ از رنج کندل باشد.
+    - برای Gravestone/Dragonfly، سایه‌ی اصلی حداقل 70٪ از رنج کندل.
     """
     high = row['high']
     low = row['low']
@@ -79,35 +79,32 @@ def identify_doji_type(row, body_threshold=0.05, gravestone_threshold=0.7, drago
     candle_range = high - low
     if candle_range == 0:
         return None
-
     body_size = abs(cl - op)
     upper_shadow = high - max(op, cl)
     lower_shadow = min(op, cl) - low
-
     if body_size > body_threshold * candle_range:
         return None
-
+    # Gravestone Doji: open/close نزدیک به پایین کندل و سایه بالایی بلند
     if (lower_shadow <= 0.1 * candle_range and 
         upper_shadow >= gravestone_threshold * candle_range and
         (min(op, cl) - low) <= 0.1 * candle_range):
         return "gravestone"
-
+    # Dragonfly Doji: open/close نزدیک به بالای کندل و سایه پایینی بلند
     if (upper_shadow <= 0.1 * candle_range and
         lower_shadow >= dragonfly_threshold * candle_range and
         (high - max(op, cl)) <= 0.1 * candle_range):
         return "dragonfly"
-
+    # Long-legged Doji
     if (upper_shadow >= 0.3 * candle_range and
         lower_shadow >= 0.3 * candle_range):
         return "long_legged"
-
     return "standard"
 
 def identify_pin_bar(row, body_max_ratio=0.25, tail_min_ratio=0.7):
     """
     تشخیص پین‌بار صعودی یا نزولی با شرایط سخت‌تر:
-    - بدنه کندل حداکثر 25٪ از رنج کندل باشد
-    - سایه‌ی اصلی حداقل 70٪ از رنج کندل
+    - بدنه کندل حداکثر 25٪ از رنج کندل.
+    - سایه‌ی اصلی حداقل 70٪ از رنج کندل.
     """
     high = row['high']
     low = row['low']
@@ -116,24 +113,19 @@ def identify_pin_bar(row, body_max_ratio=0.25, tail_min_ratio=0.7):
     candle_range = high - low
     if candle_range == 0:
         return None
-
     body_size = abs(cl - op)
     upper_shadow = high - max(op, cl)
     lower_shadow = min(op, cl) - low
-
     if body_size > body_max_ratio * candle_range:
         return None
-
     if (lower_shadow >= tail_min_ratio * candle_range and
         upper_shadow <= 0.1 * candle_range and
         cl > op):
         return "bullish_pin"
-
     if (upper_shadow >= tail_min_ratio * candle_range and
         lower_shadow <= 0.1 * candle_range and
         cl < op):
         return "bearish_pin"
-
     return None
 
 def detect_advanced_divergence(df, rsi_period=14, pivot_size=3,
@@ -142,8 +134,8 @@ def detect_advanced_divergence(df, rsi_period=14, pivot_size=3,
                                rsi_zone_filter=True):
     """
     تشخیص واگرایی پیشرفته:
-    - اختلاف قیمت حداقل 1.2٪ و اختلاف RSI حداقل 6 واحد
-    - برای نزولی: RSI > 60؛ برای صعودی: RSI < 40
+    - اختلاف قیمت حداقل 1.2٪ و اختلاف RSI حداقل 6 واحد.
+    - فیلتر محدوده RSI: برای نزولی RSI باید بالای 60 و برای صعودی RSI زیر 40 باشد.
     """
     df['rsi'] = ta.rsi(df['close'], length=rsi_period)
     window_size = 20
@@ -330,7 +322,7 @@ def get_bitcoin_data():
         return pd.DataFrame()
 
 def get_symbol_data(symbol, timeframe, limit=60):
-    """دریافت داده سایر نمادها از CryptoCompare."""
+    """دریافت داده سایر نمادها از CryptoCompare (پشتیبانی از فرمت "MOODENG/USDT" و "MOODENGUSDT")."""
     import requests
     try:
         if timeframe == '15m':
@@ -348,12 +340,15 @@ def get_symbol_data(symbol, timeframe, limit=60):
         else:
             raise ValueError("تایم‌فریم پشتیبانی نمی‌شود. فقط '15m'، '1h' یا '1d' مجاز است.")
 
-        if symbol.endswith("USDT"):
-            fsym = symbol[:-4]
-            tsym = "USDT"
+        if "/" in symbol:
+            fsym, tsym = symbol.split("/")
         else:
-            fsym, tsym = symbol.split('/')
-
+            if symbol.endswith("USDT"):
+                fsym = symbol[:-4]
+                tsym = "USDT"
+            else:
+                fsym, tsym = symbol.split()
+                
         params = {
             'fsym': fsym,
             'tsym': tsym,
@@ -467,7 +462,7 @@ def analyze_symbol(symbol, timeframe='15m'):
     sl = tp1 = tp2 = tp3 = None
     risk_message = ""
 
-    # تعریف متغیرهای قالب‌بندی شده برای نمایش اطلاعات
+    # قالب‌بندی مقادیر برای نمایش
     rsi_str = f"{rsi_val:.2f}" if rsi_val is not None else "N/A"
     support_str = f"{df['support'].iloc[-1]:.2f}"
     resistance_str = f"{df['resistance'].iloc[-1]:.2f}"
@@ -506,18 +501,20 @@ def analyze_symbol(symbol, timeframe='15m'):
                             f"TP2 (30%): {tp2:.2f}\n"
                             f"TP3 (30%): {tp3:.2f}")
     elif latest_doji is not None:
-        if latest_doji == "gravestone":
-            signal = "الگوی Gravestone Doji شناسایی شد (فشار فروش)"
-        elif latest_doji == "dragonfly":
-            signal = "الگوی Dragonfly Doji شناسایی شد (فشار خرید)"
-        else:
-            signal = "الگوی دوجی شناسایی شد"
+        # به عنوان سیگنال غیر قابل معامله: دوجی تنها نشان‌دهنده تردید است.
+        signal = f"الگوی {latest_doji} شناسایی شد؛ نیاز به تایید اضافی برای ورود"
+        risk_message = ""
     elif divergence is not None:
         signal = f"واگرایی شناسایی شد: {divergence}"
+        risk_message = ""
     elif big_green:
         signal = "کندل صعودی قدرتمند شناسایی شد (Big Green Candle)"
+        risk_message = ""
     elif price_rise_2pct:
         signal = "افزایش قیمت بیش از ۲٪ در کندل اخیر"
+        risk_message = ""
+    else:
+        risk_message = ""
     
     message = f"""
 تحلیل بازار برای {symbol}:
@@ -535,7 +532,8 @@ def analyze_symbol(symbol, timeframe='15m'):
 def multi_symbol_analysis_loop():
     symbols = [
         'BTCUSDT', 'ETHUSDT', 'SHIBUSDT', 'NEARUSDT',
-        'SOLUSDT', 'DOGEUSDT', 'BNBUSDT'
+        'SOLUSDT', 'DOGEUSDT', 'BNBUSDT',
+        'MOODENGUSDT', 'ZECUSDT', 'ONEUSDT', 'RSRUSDT', 'HOTUSDT', 'XLMUSDT', 'SONICUSDT', 'CAKEUSDT'
     ]
     while True:
         try:
