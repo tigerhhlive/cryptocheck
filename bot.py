@@ -27,7 +27,7 @@ NUM_CANDLES = 60            # تعداد کندل‌های مورد استفاد
 VOLUME_MULTIPLIER = 1.2     
 PRICE_CHANGE_THRESHOLD = 0.8  
 STD_MULTIPLIER = 1.0        
-ALERT_COOLDOWN = 900        # 15 دقیقه (برای هشدار)
+ALERT_COOLDOWN = 420        # 7 دقیقه (برای هشدار)
 HEARTBEAT_INTERVAL = 3600   # 1 ساعت
 
 # تنظیمات اندیکاتورهای اضافی و مدیریت ریسک
@@ -430,7 +430,7 @@ def monitor_bitcoin():
                 last_heartbeat_time = time.time()
 
             logging.info("چرخه نظارت BTC/USDT تکمیل شد.")
-            time.sleep(600)  # کاهش زمان به 10 دقیقه (600 ثانیه)
+            time.sleep(420)  # کاهش زمان به 7 دقیقه (420 ثانیه)
         except Exception as ex:
             logging.error("خطای غیرمنتظره در monitor_bitcoin: " + str(ex))
             time.sleep(60)
@@ -556,7 +556,7 @@ def multi_symbol_analysis_loop():
                 except Exception as e:
                     logging.error(f"خطا در بررسی {symbol}: {e}")
             logging.info("چرخه تحلیل چند ارز تکمیل شد.")
-            time.sleep(600)  # چرخه بررسی هر 10 دقیقه
+            time.sleep(420)  # چرخه بررسی هر 7 دقیقه
         except Exception as ex:
             logging.error("خطای غیرمنتظره در multi_symbol_analysis_loop: " + str(ex))
             time.sleep(60)
