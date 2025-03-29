@@ -296,7 +296,7 @@ def check_spike(candles):
 # =============================================================================
 
 def get_bitcoin_data():
-    """دریافت داده BTC/USDT از CryptoCompare با کندل‌های 15 دقیقه."""
+    """دریافت داده BTC/USDT از CryptoCompare."""
     import requests
     url = "https://min-api.cryptocompare.com/data/v2/histominute"
     params = {
@@ -330,7 +330,7 @@ def get_bitcoin_data():
         return pd.DataFrame()
 
 def get_symbol_data(symbol, timeframe, limit=60):
-    """دریافت داده سایر نمادها با تایم‌فریم مشخص از CryptoCompare."""
+    """دریافت داده سایر نمادها از CryptoCompare."""
     import requests
     try:
         if timeframe == '15m':
@@ -441,14 +441,13 @@ def analyze_symbol(symbol, timeframe='15m'):
     trend = find_trendline(df)
     divergence = detect_advanced_divergence(df)
     rsi_val = df['rsi'].iloc[-1] if 'rsi' in df.columns else None
-    
+
     # محاسبه MACD و ADX برای تایید روند
     macd_df = ta.macd(df['close'], fast=12, slow=26, signal=9)
     df['MACD'] = macd_df['MACD_12_26_9']
     df['MACD_signal'] = macd_df['MACDs_12_26_9']
     adx_df = ta.adx(df['high'], df['low'], df['close'], length=14)
     df['ADX'] = adx_df['ADX_14']
-    # به جای DIP_14 از DMP_14 و به جای DIN_14 از DMN_14 استفاده می‌کنیم
     df['DIp'] = adx_df['DMP_14']
     df['DIN'] = adx_df['DMN_14']
 
@@ -468,6 +467,15 @@ def analyze_symbol(symbol, timeframe='15m'):
     sl = tp1 = tp2 = tp3 = None
     risk_message = ""
 
+    # تعریف متغیرهای قالب‌بندی شده برای نمایش اطلاعات
+    rsi_str = f"{rsi_val:.2f}" if rsi_val is not None else "N/A"
+    support_str = f"{df['support'].iloc[-1]:.2f}"
+    resistance_str = f"{df['resistance'].iloc[-1]:.2f}"
+    macd_str = f"{df['MACD'].iloc[-1]:.2f}"
+    macd_signal_str = f"{df['MACD_signal'].iloc[-1]:.2f}"
+    adx_str = f"{df['ADX'].iloc[-1]:.2f}"
+    entry_str = f"{entry_price:.2f}"
+
     # شرایط ورود پیشرفته با تایید MACD و ADX
     if pin_bar == "bullish_pin" and rsi_val is not None and rsi_val > 30:
         if (df['MACD'].iloc[-1] > df['MACD_signal'].iloc[-1] and 
@@ -478,7 +486,7 @@ def analyze_symbol(symbol, timeframe='15m'):
             tp1 = entry_price + atr_val * TP1_MULTIPLIER
             tp2 = entry_price + atr_val * TP2_MULTIPLIER
             tp3 = entry_price + atr_val * TP3_MULTIPLIER
-            risk_message = (f"\nنقطه ورود: {entry_price:.2f}\n"
+            risk_message = (f"\nنقطه ورود: {entry_str}\n"
                             f"SL: {sl:.2f}\n"
                             f"TP1 (40%): {tp1:.2f}\n"
                             f"TP2 (30%): {tp2:.2f}\n"
@@ -492,7 +500,7 @@ def analyze_symbol(symbol, timeframe='15m'):
             tp1 = entry_price - atr_val * TP1_MULTIPLIER
             tp2 = entry_price - atr_val * TP2_MULTIPLIER
             tp3 = entry_price - atr_val * TP3_MULTIPLIER
-            risk_message = (f"\nنقطه ورود: {entry_price:.2f}\n"
+            risk_message = (f"\nنقطه ورود: {entry_str}\n"
                             f"SL: {sl:.2f}\n"
                             f"TP1 (40%): {tp1:.2f}\n"
                             f"TP2 (30%): {tp2:.2f}\n"
@@ -511,18 +519,15 @@ def analyze_symbol(symbol, timeframe='15m'):
     elif price_rise_2pct:
         signal = "افزایش قیمت بیش از ۲٪ در کندل اخیر"
     
-    if sl and tp1 and tp2 and tp3:
-        risk_message = f"\nنقطه ورود: {entry_price:.2f}\nSL: {sl:.2f}\nTP1 (40%): {tp1:.2f}\nTP2 (30%): {tp2:.2f}\nTP3 (30%): {tp3:.2f}"
-    
     message = f"""
 تحلیل بازار برای {symbol}:
-- قیمت فعلی: {entry_price:.2f}
-- حمایت: {df['support'].iloc[-1]:.2f}
-- مقاومت: {df['resistance'].iloc[-1]:.2f}
+- قیمت فعلی: {entry_str}
+- حمایت: {support_str}
+- مقاومت: {resistance_str}
 - خط روند: {trend}
-- RSI: {rsi_val:.2f if rsi_val is not None else 'N/A'}
-- MACD: {df['MACD'].iloc[-1]:.2f} | سیگنال: {df['MACD_signal'].iloc[-1]:.2f}
-- ADX: {df['ADX'].iloc[-1]:.2f}
+- RSI: {rsi_str}
+- MACD: {macd_str} | سیگنال: {macd_signal_str}
+- ADX: {adx_str}
 - سیگنال: {signal}{risk_message}
 """
     return message
