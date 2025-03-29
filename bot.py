@@ -34,9 +34,9 @@ HEARTBEAT_INTERVAL = 3600   # 1 ساعت
 ADX_THRESHOLD = 25          # حد آستانه ADX
 ATR_PERIOD = 14             # دوره ATR
 ATR_MULTIPLIER_SL = 1.5     # ضرایب برای استاپ لاس بر اساس ATR
-TP1_MULTIPLIER = 2.0        # سطح اول TP: مثلاً ATR*2
-TP2_MULTIPLIER = 3.0        # سطح دوم TP: مثلاً ATR*3
-TP3_MULTIPLIER = 4.0        # سطح سوم TP: مثلاً ATR*4
+TP1_MULTIPLIER = 2.0        # سطح اول TP (مثلاً ATR*2)
+TP2_MULTIPLIER = 3.0        # سطح دوم TP (مثلاً ATR*3)
+TP3_MULTIPLIER = 4.0        # سطح سوم TP (مثلاً ATR*4)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -69,8 +69,8 @@ def send_telegram_message(message):
 def identify_doji_type(row, body_threshold=0.05, gravestone_threshold=0.7, dragonfly_threshold=0.7):
     """
     تشخیص انواع دوجی با تعریف سخت‌گیرانه:
-    - بدنه کندل حداکثر 5٪ از رنج کندل باشد.
-    - برای Gravestone/Dragonfly، سایه‌ی اصلی حداقل 70٪ از رنج کندل.
+    - بدنه کندل حداکثر 5٪ از رنج کندل باشد
+    - برای Gravestone و Dragonfly، سایه‌ی اصلی حداقل 70٪ از رنج کندل
     """
     high = row['high']
     low = row['low']
@@ -79,29 +79,35 @@ def identify_doji_type(row, body_threshold=0.05, gravestone_threshold=0.7, drago
     candle_range = high - low
     if candle_range == 0:
         return None
+
     body_size = abs(cl - op)
     upper_shadow = high - max(op, cl)
     lower_shadow = min(op, cl) - low
+
     if body_size > body_threshold * candle_range:
         return None
+
     if (lower_shadow <= 0.1 * candle_range and 
         upper_shadow >= gravestone_threshold * candle_range and
         (min(op, cl) - low) <= 0.1 * candle_range):
         return "gravestone"
+
     if (upper_shadow <= 0.1 * candle_range and
         lower_shadow >= dragonfly_threshold * candle_range and
         (high - max(op, cl)) <= 0.1 * candle_range):
         return "dragonfly"
+
     if (upper_shadow >= 0.3 * candle_range and
         lower_shadow >= 0.3 * candle_range):
         return "long_legged"
+
     return "standard"
 
 def identify_pin_bar(row, body_max_ratio=0.25, tail_min_ratio=0.7):
     """
     تشخیص پین‌بار صعودی یا نزولی با شرایط سخت‌تر:
-    - بدنه کندل حداکثر 25٪ از رنج کندل باشد.
-    - سایه‌ی اصلی حداقل 70٪ از رنج کندل.
+    - بدنه کندل حداکثر 25٪ از رنج کندل باشد
+    - سایه‌ی اصلی حداقل 70٪ از رنج کندل
     """
     high = row['high']
     low = row['low']
@@ -110,29 +116,34 @@ def identify_pin_bar(row, body_max_ratio=0.25, tail_min_ratio=0.7):
     candle_range = high - low
     if candle_range == 0:
         return None
+
     body_size = abs(cl - op)
     upper_shadow = high - max(op, cl)
     lower_shadow = min(op, cl) - low
+
     if body_size > body_max_ratio * candle_range:
         return None
+
     if (lower_shadow >= tail_min_ratio * candle_range and
         upper_shadow <= 0.1 * candle_range and
         cl > op):
         return "bullish_pin"
+
     if (upper_shadow >= tail_min_ratio * candle_range and
         lower_shadow <= 0.1 * candle_range and
         cl < op):
         return "bearish_pin"
+
     return None
 
 def detect_advanced_divergence(df, rsi_period=14, pivot_size=3,
-                               price_diff_threshold=1.2,  # درصد اختلاف قیمت
-                               rsi_diff_threshold=6.0,    # اختلاف RSI
+                               price_diff_threshold=1.2,
+                               rsi_diff_threshold=6.0,
                                rsi_zone_filter=True):
     """
-    تشخیص واگرایی پیشرفته با حداقل اختلاف قیمت و RSI.
-    فقط زمانی واگرایی صادر می‌شود که اختلاف قیمت حداقل 1.2٪ و اختلاف RSI حداقل 6 واحد باشد.
-    همچنین فیلتر محدوده RSI: برای نزولی RSI > 60 و برای صعودی RSI < 40.
+    تشخیص واگرایی پیشرفته:
+    - اختلاف قیمت حداقل 1.2٪ و اختلاف RSI حداقل 6 واحد
+    - برای نزولی: RSI > 60؛ برای صعودی: RSI < 40
     """
     df['rsi'] = ta.rsi(df['close'], length=rsi_period)
     window_size = 20
@@ -184,7 +195,7 @@ def detect_advanced_divergence(df, rsi_period=14, pivot_size=3,
     return None
 
 def find_support_resistance(df, window=5):
-    """محاسبه سطوح حمایت و مقاومت با رولینگ مین/مکس."""
+    """محاسبه سطوح حمایت و مقاومت."""
     try:
         df['support'] = df['low'].rolling(window=window).min()
         df['resistance'] = df['high'].rolling(window=window).max()
@@ -208,7 +219,7 @@ def find_trendline(df):
         return "روند خنثی"
 
 def is_big_green_candle(row, threshold=2.0):
-    """تشخیص کندل سبز قدرتمند با افزایش حداقل threshold% در بدنه."""
+    """تشخیص کندل سبز قدرتمند."""
     try:
         if row['open'] == 0:
             return False
@@ -219,7 +230,7 @@ def is_big_green_candle(row, threshold=2.0):
         return False
 
 def is_price_rise_above_threshold(df, threshold=2.0):
-    """آیا تغییر قیمت کندل آخر نسبت به کندل قبل بیش از threshold% است؟"""
+    """آیا تغییر قیمت کندل آخر بیش از threshold% است؟"""
     try:
         if len(df) < 2:
             return False
@@ -430,15 +441,16 @@ def analyze_symbol(symbol, timeframe='15m'):
     trend = find_trendline(df)
     divergence = detect_advanced_divergence(df)
     rsi_val = df['rsi'].iloc[-1] if 'rsi' in df.columns else None
-
+    
     # محاسبه MACD و ADX برای تایید روند
     macd_df = ta.macd(df['close'], fast=12, slow=26, signal=9)
     df['MACD'] = macd_df['MACD_12_26_9']
     df['MACD_signal'] = macd_df['MACDs_12_26_9']
     adx_df = ta.adx(df['high'], df['low'], df['close'], length=14)
     df['ADX'] = adx_df['ADX_14']
-    df['DIp'] = adx_df['DIP_14']
-    df['DIN'] = adx_df['DIN_14']
+    # به جای DIP_14 از DMP_14 و به جای DIN_14 از DMN_14 استفاده می‌کنیم
+    df['DIp'] = adx_df['DMP_14']
+    df['DIN'] = adx_df['DMN_14']
 
     # محاسبه ATR برای مدیریت ریسک
     atr_val = ta.atr(df['high'], df['low'], df['close'], length=ATR_PERIOD).iloc[-1]
@@ -450,13 +462,13 @@ def analyze_symbol(symbol, timeframe='15m'):
     big_green = df.apply(is_big_green_candle, axis=1).iloc[-1]
     price_rise_2pct = is_price_rise_above_threshold(df, 2.0)
 
-    # تعیین سیگنال اولیه
+    # تعیین سیگنال و مدیریت ریسک
     signal = "سیگنالی یافت نشد"
     entry_price = df['close'].iloc[-1]
-    sl = tp = None
+    sl = tp1 = tp2 = tp3 = None
+    risk_message = ""
 
     # شرایط ورود پیشرفته با تایید MACD و ADX
-    # برای پوزیشن Long: bullish_pin + RSI > 30 + MACD > MACD_signal + ADX > ADX_THRESHOLD و DIp > DIN
     if pin_bar == "bullish_pin" and rsi_val is not None and rsi_val > 30:
         if (df['MACD'].iloc[-1] > df['MACD_signal'].iloc[-1] and 
             df['ADX'].iloc[-1] > ADX_THRESHOLD and 
@@ -471,9 +483,6 @@ def analyze_symbol(symbol, timeframe='15m'):
                             f"TP1 (40%): {tp1:.2f}\n"
                             f"TP2 (30%): {tp2:.2f}\n"
                             f"TP3 (30%): {tp3:.2f}")
-        else:
-            risk_message = ""
-    # برای پوزیشن Short: bearish_pin + RSI < 70 + MACD < MACD_signal + ADX > ADX_THRESHOLD و DIp < DIN
     elif pin_bar == "bearish_pin" and rsi_val is not None and rsi_val < 70:
         if (df['MACD'].iloc[-1] < df['MACD_signal'].iloc[-1] and 
             df['ADX'].iloc[-1] > ADX_THRESHOLD and 
@@ -488,8 +497,6 @@ def analyze_symbol(symbol, timeframe='15m'):
                             f"TP1 (40%): {tp1:.2f}\n"
                             f"TP2 (30%): {tp2:.2f}\n"
                             f"TP3 (30%): {tp3:.2f}")
-        else:
-            risk_message = ""
     elif latest_doji is not None:
         if latest_doji == "gravestone":
             signal = "الگوی Gravestone Doji شناسایی شد (فشار فروش)"
@@ -497,18 +504,15 @@ def analyze_symbol(symbol, timeframe='15m'):
             signal = "الگوی Dragonfly Doji شناسایی شد (فشار خرید)"
         else:
             signal = "الگوی دوجی شناسایی شد"
-        risk_message = ""
     elif divergence is not None:
         signal = f"واگرایی شناسایی شد: {divergence}"
-        risk_message = ""
     elif big_green:
         signal = "کندل صعودی قدرتمند شناسایی شد (Big Green Candle)"
-        risk_message = ""
     elif price_rise_2pct:
         signal = "افزایش قیمت بیش از ۲٪ در کندل اخیر"
-        risk_message = ""
-    else:
-        risk_message = ""
+    
+    if sl and tp1 and tp2 and tp3:
+        risk_message = f"\nنقطه ورود: {entry_price:.2f}\nSL: {sl:.2f}\nTP1 (40%): {tp1:.2f}\nTP2 (30%): {tp2:.2f}\nTP3 (30%): {tp3:.2f}"
     
     message = f"""
 تحلیل بازار برای {symbol}:
@@ -526,7 +530,7 @@ def analyze_symbol(symbol, timeframe='15m'):
 def multi_symbol_analysis_loop():
     symbols = [
         'BTCUSDT', 'ETHUSDT', 'SHIBUSDT', 'NEARUSDT',
-        'SOLUSDT', 'DOGEUSDT', 'MATICUSDT', 'BNBUSDT'
+        'SOLUSDT', 'DOGEUSDT', 'BNBUSDT'
     ]
     while True:
         try:
