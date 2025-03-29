@@ -27,7 +27,7 @@ NUM_CANDLES = 60            # تعداد کندل‌های مورد استفاد
 VOLUME_MULTIPLIER = 1.2     
 PRICE_CHANGE_THRESHOLD = 0.8  
 STD_MULTIPLIER = 1.0        
-ALERT_COOLDOWN = 900        # 15 دقیقه
+ALERT_COOLDOWN = 900        # 15 دقیقه (برای هشدار)
 HEARTBEAT_INTERVAL = 3600   # 1 ساعت
 
 # تنظیمات اندیکاتورهای اضافی و مدیریت ریسک
@@ -37,6 +37,7 @@ ATR_MULTIPLIER_SL = 1.5     # ضرایب برای استاپ لاس بر اسا�
 TP1_MULTIPLIER = 2.0        # سطح اول TP (مثلاً ATR*2)
 TP2_MULTIPLIER = 3.0        # سطح دوم TP (مثلاً ATR*3)
 TP3_MULTIPLIER = 4.0        # سطح سوم TP (مثلاً ATR*4)
+MIN_ATR = 0.01              # حداقل مقدار ATR
 
 logging.basicConfig(
     level=logging.INFO,
@@ -79,25 +80,28 @@ def identify_doji_type(row, body_threshold=0.05, gravestone_threshold=0.7, drago
     candle_range = high - low
     if candle_range == 0:
         return None
+
     body_size = abs(cl - op)
     upper_shadow = high - max(op, cl)
     lower_shadow = min(op, cl) - low
+
     if body_size > body_threshold * candle_range:
         return None
-    # Gravestone Doji: open/close نزدیک به پایین کندل و سایه بالایی بلند
+
     if (lower_shadow <= 0.1 * candle_range and 
         upper_shadow >= gravestone_threshold * candle_range and
         (min(op, cl) - low) <= 0.1 * candle_range):
         return "gravestone"
-    # Dragonfly Doji: open/close نزدیک به بالای کندل و سایه پایینی بلند
+
     if (upper_shadow <= 0.1 * candle_range and
         lower_shadow >= dragonfly_threshold * candle_range and
         (high - max(op, cl)) <= 0.1 * candle_range):
         return "dragonfly"
-    # Long-legged Doji
+
     if (upper_shadow >= 0.3 * candle_range and
         lower_shadow >= 0.3 * candle_range):
         return "long_legged"
+
     return "standard"
 
 def identify_pin_bar(row, body_max_ratio=0.25, tail_min_ratio=0.7):
@@ -113,19 +117,24 @@ def identify_pin_bar(row, body_max_ratio=0.25, tail_min_ratio=0.7):
     candle_range = high - low
     if candle_range == 0:
         return None
+
     body_size = abs(cl - op)
     upper_shadow = high - max(op, cl)
     lower_shadow = min(op, cl) - low
+
     if body_size > body_max_ratio * candle_range:
         return None
+
     if (lower_shadow >= tail_min_ratio * candle_range and
         upper_shadow <= 0.1 * candle_range and
         cl > op):
         return "bullish_pin"
+
     if (upper_shadow >= tail_min_ratio * candle_range and
         lower_shadow <= 0.1 * candle_range and
         cl < op):
         return "bearish_pin"
+
     return None
 
 def detect_advanced_divergence(df, rsi_period=14, pivot_size=3,
@@ -135,7 +144,7 @@ def detect_advanced_divergence(df, rsi_period=14, pivot_size=3,
     """
     تشخیص واگرایی پیشرفته:
     - اختلاف قیمت حداقل 1.2٪ و اختلاف RSI حداقل 6 واحد.
-    - فیلتر محدوده RSI: برای نزولی RSI باید بالای 60 و برای صعودی RSI زیر 40 باشد.
+    - برای نزولی: RSI > 60؛ برای صعودی: RSI < 40.
     """
     df['rsi'] = ta.rsi(df['close'], length=rsi_period)
     window_size = 20
@@ -322,7 +331,7 @@ def get_bitcoin_data():
         return pd.DataFrame()
 
 def get_symbol_data(symbol, timeframe, limit=60):
-    """دریافت داده سایر نمادها از CryptoCompare (پشتیبانی از فرمت "MOODENG/USDT" و "MOODENGUSDT")."""
+    """دریافت داده سایر نمادها از CryptoCompare (پشتیبانی از فرمت‌های دارای "/" هم)."""
     import requests
     try:
         if timeframe == '15m':
@@ -348,7 +357,7 @@ def get_symbol_data(symbol, timeframe, limit=60):
                 tsym = "USDT"
             else:
                 fsym, tsym = symbol.split()
-                
+
         params = {
             'fsym': fsym,
             'tsym': tsym,
@@ -421,7 +430,7 @@ def monitor_bitcoin():
                 last_heartbeat_time = time.time()
 
             logging.info("چرخه نظارت BTC/USDT تکمیل شد.")
-            time.sleep(900)
+            time.sleep(600)  # کاهش زمان به 10 دقیقه (600 ثانیه)
         except Exception as ex:
             logging.error("خطای غیرمنتظره در monitor_bitcoin: " + str(ex))
             time.sleep(60)
@@ -448,6 +457,7 @@ def analyze_symbol(symbol, timeframe='15m'):
 
     # محاسبه ATR برای مدیریت ریسک
     atr_val = ta.atr(df['high'], df['low'], df['close'], length=ATR_PERIOD).iloc[-1]
+    effective_atr = atr_val if atr_val > MIN_ATR else MIN_ATR
 
     # تشخیص الگوهای کندلی
     doji_types = df.apply(identify_doji_type, axis=1)
@@ -471,16 +481,16 @@ def analyze_symbol(symbol, timeframe='15m'):
     adx_str = f"{df['ADX'].iloc[-1]:.2f}"
     entry_str = f"{entry_price:.2f}"
 
-    # شرایط ورود پیشرفته با تایید MACD و ADX
+    # ورود به پوزیشن با تایید MACD و ADX
     if pin_bar == "bullish_pin" and rsi_val is not None and rsi_val > 30:
         if (df['MACD'].iloc[-1] > df['MACD_signal'].iloc[-1] and 
             df['ADX'].iloc[-1] > ADX_THRESHOLD and 
             df['DIp'].iloc[-1] > df['DIN'].iloc[-1]):
             signal = "ورود به پوزیشن Long (Bullish Pin Bar + تایید MACD/ADX + RSI بالای 30)"
-            sl = entry_price - atr_val * ATR_MULTIPLIER_SL
-            tp1 = entry_price + atr_val * TP1_MULTIPLIER
-            tp2 = entry_price + atr_val * TP2_MULTIPLIER
-            tp3 = entry_price + atr_val * TP3_MULTIPLIER
+            sl = entry_price - effective_atr * ATR_MULTIPLIER_SL
+            tp1 = entry_price + effective_atr * TP1_MULTIPLIER
+            tp2 = entry_price + effective_atr * TP2_MULTIPLIER
+            tp3 = entry_price + effective_atr * TP3_MULTIPLIER
             risk_message = (f"\nنقطه ورود: {entry_str}\n"
                             f"SL: {sl:.2f}\n"
                             f"TP1 (40%): {tp1:.2f}\n"
@@ -491,17 +501,16 @@ def analyze_symbol(symbol, timeframe='15m'):
             df['ADX'].iloc[-1] > ADX_THRESHOLD and 
             df['DIp'].iloc[-1] < df['DIN'].iloc[-1]):
             signal = "ورود به پوزیشن Short (Bearish Pin Bar + تایید MACD/ADX + RSI زیر 70)"
-            sl = entry_price + atr_val * ATR_MULTIPLIER_SL
-            tp1 = entry_price - atr_val * TP1_MULTIPLIER
-            tp2 = entry_price - atr_val * TP2_MULTIPLIER
-            tp3 = entry_price - atr_val * TP3_MULTIPLIER
+            sl = entry_price + effective_atr * ATR_MULTIPLIER_SL
+            tp1 = entry_price - effective_atr * TP1_MULTIPLIER
+            tp2 = entry_price - effective_atr * TP2_MULTIPLIER
+            tp3 = entry_price - effective_atr * TP3_MULTIPLIER
             risk_message = (f"\nنقطه ورود: {entry_str}\n"
                             f"SL: {sl:.2f}\n"
                             f"TP1 (40%): {tp1:.2f}\n"
                             f"TP2 (30%): {tp2:.2f}\n"
                             f"TP3 (30%): {tp3:.2f}")
     elif latest_doji is not None:
-        # به عنوان سیگنال غیر قابل معامله: دوجی تنها نشان‌دهنده تردید است.
         signal = f"الگوی {latest_doji} شناسایی شد؛ نیاز به تایید اضافی برای ورود"
         risk_message = ""
     elif divergence is not None:
@@ -547,7 +556,7 @@ def multi_symbol_analysis_loop():
                 except Exception as e:
                     logging.error(f"خطا در بررسی {symbol}: {e}")
             logging.info("چرخه تحلیل چند ارز تکمیل شد.")
-            time.sleep(900)
+            time.sleep(600)  # چرخه بررسی هر 10 دقیقه
         except Exception as ex:
             logging.error("خطای غیرمنتظره در multi_symbol_analysis_loop: " + str(ex))
             time.sleep(60)
