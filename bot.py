@@ -34,7 +34,7 @@ HEARTBEAT_INTERVAL = 3600   # 1 ساعت
 ADX_THRESHOLD = 25          # حد آستانه ADX
 ATR_PERIOD = 14             # دوره ATR
 ATR_MULTIPLIER_SL = 1.5     # ضرایب برای استاپ لاس بر اساس ATR
-TP1_MULTIPLIER = 1.0        # ضرایب برای TP (در حالت ATR-based)
+TP1_MULTIPLIER = 1.0        # ضرایب برای TP در حالت ATR-based
 TP2_MULTIPLIER = 1.5
 TP3_MULTIPLIER = 2.0
 MIN_PERCENT_RISK = 0.05     # حداقل درصد ریسک = 5٪ از قیمت ورود
@@ -64,14 +64,14 @@ def send_telegram_message(message):
         logging.error(f"خطا در ارسال پیام تلگرام: {e}")
 
 # =============================================================================
-# توابع پیشرفته تحلیل تکنیکال
+# توابع تحلیل تکنیکال پیشرفته
 # =============================================================================
 
 def identify_doji_type(row, body_threshold=0.05, gravestone_threshold=0.7, dragonfly_threshold=0.7):
     """
-    تشخیص انواع دوجی با تعریف سخت‌گیرانه:
-    - بدنه کندل حداکثر 5٪ از رنج کندل.
-    - برای Gravestone/Dragonfly، سایه‌ی اصلی حداقل 70٪ از رنج کندل.
+    تشخیص انواع دوجی:
+      - بدنه کندل ≤ 5٪ از رنج کندل.
+      - در صورت عدم تطابق با پین‌بار، اگر فقط الگوی دوجی وجود داشته باشد، به عنوان هشدار تاییدی صادر می‌شود.
     """
     high = row['high']
     low = row['low']
@@ -100,9 +100,9 @@ def identify_doji_type(row, body_threshold=0.05, gravestone_threshold=0.7, drago
 
 def identify_pin_bar(row, body_max_ratio=0.25, tail_min_ratio=0.7):
     """
-    تشخیص پین‌بار صعودی یا نزولی با شرایط سخت‌تر:
-    - بدنه کندل حداکثر 25٪ از رنج کندل.
-    - سایه‌ی اصلی حداقل 70٪ از رنج کندل.
+    تشخیص پین‌بار:
+      - بدنه کندل ≤ 25٪ از رنج کندل.
+      - سایه‌ی اصلی ≥ 70٪ از رنج کندل.
     """
     high = row['high']
     low = row['low']
@@ -132,8 +132,8 @@ def detect_advanced_divergence(df, rsi_period=14, pivot_size=3,
                                rsi_zone_filter=True):
     """
     تشخیص واگرایی پیشرفته:
-    - اختلاف قیمت حداقل 1.2٪ و اختلاف RSI حداقل 6 واحد.
-    - برای نزولی: RSI > 60؛ برای صعودی: RSI < 40.
+      - اختلاف قیمت ≥ 1.2٪ و اختلاف RSI ≥ 6 واحد.
+      - برای نزولی: RSI > 60، برای صعودی: RSI < 40.
     """
     df['rsi'] = ta.rsi(df['close'], length=rsi_period)
     window_size = 20
@@ -444,7 +444,7 @@ def analyze_symbol(symbol, timeframe='15m'):
     df['DIp'] = adx_df['DMP_14']
     df['DIN'] = adx_df['DMN_14']
 
-    # محاسبه ATR برای مدیریت ریسک
+    # محاسبه ATR و تعیین effective_risk
     atr_val = ta.atr(df['high'], df['low'], df['close'], length=ATR_PERIOD).iloc[-1]
     effective_risk = atr_val if atr_val > (df['close'].iloc[-1] * MIN_PERCENT_RISK) else (df['close'].iloc[-1] * MIN_PERCENT_RISK)
 
@@ -470,9 +470,9 @@ def analyze_symbol(symbol, timeframe='15m'):
     adx_str = f"{df['ADX'].iloc[-1]:.2f}"
     entry_str = f"{entry_price:.2f}"
 
-    # شرط جدید برای oversold reversal (RSI بسیار پایین)
+    # شرط oversold reversal (برای ورود Long اگر RSI < 20 و کندل رو به بالا تغییر جهت داشته باشد)
     if rsi_val is not None and rsi_val < 20 and df['close'].iloc[-1] > df['close'].iloc[-2]:
-        signal = "ورود به پوزیشن Long (Reversal from Oversold RSI)"
+        signal = "ورود به پوزیشن Long (Oversold Reversal)"
         sl = entry_price * (1 - 0.05)
         tp1 = entry_price * (1 + 0.05)
         tp2 = entry_price * (1 + 0.08)
@@ -482,7 +482,7 @@ def analyze_symbol(symbol, timeframe='15m'):
                         f"TP1 (40%): {tp1:.2f}\n"
                         f"TP2 (30%): {tp2:.2f}\n"
                         f"TP3 (30%): {tp3:.2f}")
-    # ورود به پوزیشن با تایید MACD/ADX بر اساس پین‌بار
+    # ورود به پوزیشن با تایید MACD و ADX (برای پین‌بار)
     elif pin_bar == "bullish_pin" and rsi_val is not None and rsi_val > 30:
         if (df['MACD'].iloc[-1] > df['MACD_signal'].iloc[-1] and 
             df['ADX'].iloc[-1] > ADX_THRESHOLD and 
@@ -511,8 +511,9 @@ def analyze_symbol(symbol, timeframe='15m'):
                             f"TP1 (40%): {tp1:.2f}\n"
                             f"TP2 (30%): {tp2:.2f}\n"
                             f"TP3 (30%): {tp3:.2f}")
+    # اگر تنها الگوی دوجی یا واگرایی شناسایی شود، به عنوان هشدار اعلام شود (سیگنال ورود صادر نمی‌شود)
     elif latest_doji is not None:
-        signal = f"الگوی {latest_doji} شناسایی شد؛ نیاز به تایید اضافی برای ورود"
+        signal = f"الگوی {latest_doji} شناسایی شد؛ نیاز به تایید قوی‌تر برای ورود"
         risk_message = ""
     elif divergence is not None:
         signal = f"واگرایی شناسایی شد: {divergence}"
@@ -543,7 +544,8 @@ def multi_symbol_analysis_loop():
     symbols = [
         'BTCUSDT', 'ETHUSDT', 'SHIBUSDT', 'NEARUSDT',
         'SOLUSDT', 'DOGEUSDT', 'BNBUSDT',
-        'MOODENGUSDT', 'ZECUSDT', 'ONEUSDT', 'RSRUSDT', 'HOTUSDT', 'XLMUSDT', 'SONICUSDT', 'CAKEUSDT'
+        'MOODENGUSDT', 'ZECUSDT', 'ONEUSDT', 'RSRUSDT',
+        'HOTUSDT', 'XLMUSDT', 'SONICUSDT', 'CAKEUSDT'
     ]
     while True:
         try:
