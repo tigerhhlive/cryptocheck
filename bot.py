@@ -27,14 +27,14 @@ NUM_CANDLES = 60            # تعداد کندل‌های مورد استفاد
 VOLUME_MULTIPLIER = 1.2     
 PRICE_CHANGE_THRESHOLD = 0.8  
 STD_MULTIPLIER = 1.0        
-ALERT_COOLDOWN = 900        # 15 دقیقه
+ALERT_COOLDOWN = 900        # 15 دقیقه (برای هشدار)
 HEARTBEAT_INTERVAL = 3600   # 1 ساعت
 
 # تنظیمات اندیکاتورهای اضافی و مدیریت ریسک
 ADX_THRESHOLD = 25          # حد آستانه ADX
 ATR_PERIOD = 14             # دوره ATR
 ATR_MULTIPLIER_SL = 1.5     # ضرایب برای استاپ لاس بر اساس ATR
-TP1_MULTIPLIER = 1.0        # ضرایب برای TP ها در حالت ATR-based
+TP1_MULTIPLIER = 1.0        # ضرایب برای TP (در حالت ATR-based)
 TP2_MULTIPLIER = 1.5
 TP3_MULTIPLIER = 2.0
 MIN_PERCENT_RISK = 0.05     # حداقل درصد ریسک = 5٪ از قیمت ورود
@@ -444,7 +444,7 @@ def analyze_symbol(symbol, timeframe='15m'):
     df['DIp'] = adx_df['DMP_14']
     df['DIN'] = adx_df['DMN_14']
 
-    # محاسبه ATR و تعیین effective_risk
+    # محاسبه ATR برای مدیریت ریسک
     atr_val = ta.atr(df['high'], df['low'], df['close'], length=ATR_PERIOD).iloc[-1]
     effective_risk = atr_val if atr_val > (df['close'].iloc[-1] * MIN_PERCENT_RISK) else (df['close'].iloc[-1] * MIN_PERCENT_RISK)
 
@@ -470,84 +470,60 @@ def analyze_symbol(symbol, timeframe='15m'):
     adx_str = f"{df['ADX'].iloc[-1]:.2f}"
     entry_str = f"{entry_price:.2f}"
 
-    # اگر ATR پایین باشد (نوسان کم) از درصدهای ثابت استفاده شود
-    if effective_risk == df['close'].iloc[-1] * MIN_PERCENT_RISK:
-        # ورود به پوزیشن Long با شرایط پین‌بار و تایید روند
-        if pin_bar == "bullish_pin" and rsi_val is not None and rsi_val > 30:
-            if (df['MACD'].iloc[-1] > df['MACD_signal'].iloc[-1] and 
-                df['ADX'].iloc[-1] > ADX_THRESHOLD and 
-                df['DIp'].iloc[-1] > df['DIN'].iloc[-1]):
-                signal = "ورود به پوزیشن Long (Bullish Pin Bar + تایید MACD/ADX + RSI بالای 30)"
-                sl = entry_price * (1 - 0.05)
-                tp1 = entry_price * (1 + 0.05)
-                tp2 = entry_price * (1 + 0.08)
-                tp3 = entry_price * (1 + 0.12)
-                risk_message = (f"\nنقطه ورود: {entry_str}\n"
-                                f"SL: {sl:.2f}\n"
-                                f"TP1 (40%): {tp1:.2f}\n"
-                                f"TP2 (30%): {tp2:.2f}\n"
-                                f"TP3 (30%): {tp3:.2f}")
-        # ورود به پوزیشن Short
-        elif pin_bar == "bearish_pin" and rsi_val is not None and rsi_val < 70:
-            if (df['MACD'].iloc[-1] < df['MACD_signal'].iloc[-1] and 
-                df['ADX'].iloc[-1] > ADX_THRESHOLD and 
-                df['DIp'].iloc[-1] < df['DIN'].iloc[-1]):
-                signal = "ورود به پوزیشن Short (Bearish Pin Bar + تایید MACD/ADX + RSI زیر 70)"
-                sl = entry_price * (1 + 0.05)
-                tp1 = entry_price * (1 - 0.05)
-                tp2 = entry_price * (1 - 0.08)
-                tp3 = entry_price * (1 - 0.12)
-                risk_message = (f"\nنقطه ورود: {entry_str}\n"
-                                f"SL: {sl:.2f}\n"
-                                f"TP1 (40%): {tp1:.2f}\n"
-                                f"TP2 (30%): {tp2:.2f}\n"
-                                f"TP3 (30%): {tp3:.2f}")
-        else:
-            risk_message = ""
-    else:
-        # استفاده از روش ATR-based
-        if pin_bar == "bullish_pin" and rsi_val is not None and rsi_val > 30:
-            if (df['MACD'].iloc[-1] > df['MACD_signal'].iloc[-1] and 
-                df['ADX'].iloc[-1] > ADX_THRESHOLD and 
-                df['DIp'].iloc[-1] > df['DIN'].iloc[-1]):
-                signal = "ورود به پوزیشن Long (Bullish Pin Bar + تایید MACD/ADX + RSI بالای 30)"
-                sl = entry_price - effective_risk * ATR_MULTIPLIER_SL
-                tp1 = entry_price + effective_risk * TP1_MULTIPLIER
-                tp2 = entry_price + effective_risk * TP2_MULTIPLIER
-                tp3 = entry_price + effective_risk * TP3_MULTIPLIER
-                risk_message = (f"\nنقطه ورود: {entry_str}\n"
-                                f"SL: {sl:.2f}\n"
-                                f"TP1 (40%): {tp1:.2f}\n"
-                                f"TP2 (30%): {tp2:.2f}\n"
-                                f"TP3 (30%): {tp3:.2f}")
-        elif pin_bar == "bearish_pin" and rsi_val is not None and rsi_val < 70:
-            if (df['MACD'].iloc[-1] < df['MACD_signal'].iloc[-1] and 
-                df['ADX'].iloc[-1] > ADX_THRESHOLD and 
-                df['DIp'].iloc[-1] < df['DIN'].iloc[-1]):
-                signal = "ورود به پوزیشن Short (Bearish Pin Bar + تایید MACD/ADX + RSI زیر 70)"
-                sl = entry_price + effective_risk * ATR_MULTIPLIER_SL
-                tp1 = entry_price - effective_risk * TP1_MULTIPLIER
-                tp2 = entry_price - effective_risk * TP2_MULTIPLIER
-                tp3 = entry_price - effective_risk * TP3_MULTIPLIER
-                risk_message = (f"\nنقطه ورود: {entry_str}\n"
-                                f"SL: {sl:.2f}\n"
-                                f"TP1 (40%): {tp1:.2f}\n"
-                                f"TP2 (30%): {tp2:.2f}\n"
-                                f"TP3 (30%): {tp3:.2f}")
-        else:
-            risk_message = ""
-    
-    if latest_doji is not None and signal == "سیگنالی یافت نشد":
+    # شرط جدید برای oversold reversal (RSI بسیار پایین)
+    if rsi_val is not None and rsi_val < 20 and df['close'].iloc[-1] > df['close'].iloc[-2]:
+        signal = "ورود به پوزیشن Long (Reversal from Oversold RSI)"
+        sl = entry_price * (1 - 0.05)
+        tp1 = entry_price * (1 + 0.05)
+        tp2 = entry_price * (1 + 0.08)
+        tp3 = entry_price * (1 + 0.12)
+        risk_message = (f"\nنقطه ورود: {entry_str}\n"
+                        f"SL: {sl:.2f}\n"
+                        f"TP1 (40%): {tp1:.2f}\n"
+                        f"TP2 (30%): {tp2:.2f}\n"
+                        f"TP3 (30%): {tp3:.2f}")
+    # ورود به پوزیشن با تایید MACD/ADX بر اساس پین‌بار
+    elif pin_bar == "bullish_pin" and rsi_val is not None and rsi_val > 30:
+        if (df['MACD'].iloc[-1] > df['MACD_signal'].iloc[-1] and 
+            df['ADX'].iloc[-1] > ADX_THRESHOLD and 
+            df['DIp'].iloc[-1] > df['DIN'].iloc[-1]):
+            signal = "ورود به پوزیشن Long (Bullish Pin Bar + تایید MACD/ADX + RSI بالای 30)"
+            sl = entry_price - effective_risk * ATR_MULTIPLIER_SL
+            tp1 = entry_price + effective_risk * TP1_MULTIPLIER
+            tp2 = entry_price + effective_risk * TP2_MULTIPLIER
+            tp3 = entry_price + effective_risk * TP3_MULTIPLIER
+            risk_message = (f"\nنقطه ورود: {entry_str}\n"
+                            f"SL: {sl:.2f}\n"
+                            f"TP1 (40%): {tp1:.2f}\n"
+                            f"TP2 (30%): {tp2:.2f}\n"
+                            f"TP3 (30%): {tp3:.2f}")
+    elif pin_bar == "bearish_pin" and rsi_val is not None and rsi_val < 70:
+        if (df['MACD'].iloc[-1] < df['MACD_signal'].iloc[-1] and 
+            df['ADX'].iloc[-1] > ADX_THRESHOLD and 
+            df['DIp'].iloc[-1] < df['DIN'].iloc[-1]):
+            signal = "ورود به پوزیشن Short (Bearish Pin Bar + تایید MACD/ADX + RSI زیر 70)"
+            sl = entry_price + effective_risk * ATR_MULTIPLIER_SL
+            tp1 = entry_price - effective_risk * TP1_MULTIPLIER
+            tp2 = entry_price - effective_risk * TP2_MULTIPLIER
+            tp3 = entry_price - effective_risk * TP3_MULTIPLIER
+            risk_message = (f"\nنقطه ورود: {entry_str}\n"
+                            f"SL: {sl:.2f}\n"
+                            f"TP1 (40%): {tp1:.2f}\n"
+                            f"TP2 (30%): {tp2:.2f}\n"
+                            f"TP3 (30%): {tp3:.2f}")
+    elif latest_doji is not None:
         signal = f"الگوی {latest_doji} شناسایی شد؛ نیاز به تایید اضافی برای ورود"
         risk_message = ""
-    elif divergence is not None and signal == "سیگنالی یافت نشد":
+    elif divergence is not None:
         signal = f"واگرایی شناسایی شد: {divergence}"
         risk_message = ""
-    elif big_green and signal == "سیگنالی یافت نشد":
+    elif big_green:
         signal = "کندل صعودی قدرتمند شناسایی شد (Big Green Candle)"
         risk_message = ""
-    elif price_rise_2pct and signal == "سیگنالی یافت نشد":
+    elif price_rise_2pct:
         signal = "افزایش قیمت بیش از ۲٪ در کندل اخیر"
+        risk_message = ""
+    else:
         risk_message = ""
     
     message = f"""
