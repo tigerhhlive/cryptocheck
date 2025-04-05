@@ -138,9 +138,9 @@ def is_big_red_candle(row, threshold=2.0):
 def detect_advanced_divergence(df, rsi_period=14, pivot_size=3,
                                price_diff_threshold=1.2,
                                rsi_diff_threshold=6.0,
-                               rsi_zone_filter=True):
+                               rsi_zone_filter=True,
+                               window_size=50):  # تغییر پنجره به 50 کندل
     df['rsi'] = ta.rsi(df['close'], length=rsi_period)
-    window_size = 20
     if len(df) < window_size:
         return None
     df_window = df.iloc[-window_size:].reset_index(drop=True)
@@ -166,26 +166,34 @@ def detect_advanced_divergence(df, rsi_period=14, pivot_size=3,
     price_valleys = find_valleys(df_window['close'].tolist(), pivot_size, pivot_size)
     rsi_valleys = find_valleys(df_window['rsi'].tolist(), pivot_size, pivot_size)
 
-    if len(price_peaks) >= 2 and len(rsi_peaks) >= 2:
-        last_price_peak = price_peaks[-1]
-        prev_price_peak = price_peaks[-2]
-        last_rsi_peak = rsi_peaks[-1]
-        prev_rsi_peak = rsi_peaks[-2]
-        price_diff_percent = (df_window['close'].iloc[last_price_peak] - df_window['close'].iloc[prev_price_peak]) / df_window['close'].iloc[prev_price_peak] * 100
-        rsi_diff = df_window['rsi'].iloc[last_rsi_peak] - df_window['rsi'].iloc[prev_rsi_peak]
-        if price_diff_percent >= price_diff_threshold and rsi_diff <= -rsi_diff_threshold:
-            if (not rsi_zone_filter) or (df_window['rsi'].iloc[last_rsi_peak] > 60):
-                return "واگرایی نزولی (Bearish Divergence)"
-    if len(price_valleys) >= 2 and len(rsi_valleys) >= 2:
-        last_price_valley = price_valleys[-1]
-        prev_price_valley = price_valleys[-2]
-        last_rsi_valley = rsi_valleys[-1]
-        prev_rsi_valley = rsi_valleys[-2]
-        price_diff_percent = (df_window['close'].iloc[last_price_valley] - df_window['close'].iloc[prev_price_valley]) / df_window['close'].iloc[prev_price_valley] * 100
-        rsi_diff = df_window['rsi'].iloc[last_rsi_valley] - df_window['rsi'].iloc[prev_rsi_valley]
-        if price_diff_percent <= -price_diff_threshold and rsi_diff >= rsi_diff_threshold:
-            if (not rsi_zone_filter) or (df_window['rsi'].iloc[last_rsi_valley] < 40):
-                return "واگرایی صعودی (Bullish Divergence)"
+    # بررسی واگرایی نزولی (برای قله‌ها) با حداقل 3 نقطه
+    if len(price_peaks) >= 3 and len(rsi_peaks) >= 3:
+        # گرفتن سه قله آخر
+        last_three_price_peaks = [df_window['close'].iloc[i] for i in price_peaks[-3:]]
+        last_three_rsi_peaks = [df_window['rsi'].iloc[i] for i in rsi_peaks[-3:]]
+        # شرط: قیمت قله‌ها به ترتیب افزایشی و RSI به ترتیب کاهشی
+        if (last_three_price_peaks[0] < last_three_price_peaks[1] < last_three_price_peaks[2] and
+            last_three_rsi_peaks[0] > last_three_rsi_peaks[1] > last_three_rsi_peaks[2]):
+            # محاسبه اختلاف بین اولین و آخرین قله
+            price_diff_percent = (last_three_price_peaks[2] - last_three_price_peaks[0]) / last_three_price_peaks[0] * 100
+            rsi_diff = last_three_rsi_peaks[2] - last_three_rsi_peaks[0]
+            if price_diff_percent >= price_diff_threshold and rsi_diff <= -rsi_diff_threshold:
+                if (not rsi_zone_filter) or (last_three_rsi_peaks[2] > 70):
+                    return "واگرایی نزولی (Bearish Divergence)"
+                    
+    # بررسی واگرایی صعودی (برای دره‌ها) با حداقل 3 نقطه
+    if len(price_valleys) >= 3 and len(rsi_valleys) >= 3:
+        last_three_price_valleys = [df_window['close'].iloc[i] for i in price_valleys[-3:]]
+        last_three_rsi_valleys = [df_window['rsi'].iloc[i] for i in rsi_valleys[-3:]]
+        # شرط: قیمت دره‌ها به ترتیب کاهشی و RSI به ترتیب افزایشی
+        if (last_three_price_valleys[0] > last_three_price_valleys[1] > last_three_price_valleys[2] and
+            last_three_rsi_valleys[0] < last_three_rsi_valleys[1] < last_three_rsi_valleys[2]):
+            price_diff_percent = (last_three_price_valleys[2] - last_three_price_valleys[0]) / last_three_price_valleys[0] * 100
+            rsi_diff = last_three_rsi_valleys[2] - last_three_rsi_valleys[0]
+            if price_diff_percent <= -price_diff_threshold and rsi_diff >= rsi_diff_threshold:
+                if (not rsi_zone_filter) or (last_three_rsi_valleys[2] < 30):
+                    return "واگرایی صعودی (Bullish Divergence)"
+                    
     return None
 
 def find_support_resistance(df, window=5):
@@ -336,7 +344,7 @@ def analyze_symbol(symbol, timeframe='15m'):
     
     df = find_support_resistance(df)
     trend = find_trendline(df)
-    divergence = detect_advanced_divergence(df)
+    divergence = detect_advanced_divergence(df)  # تغییر در محدوده و تعداد قله/دره اعمال شده
     rsi_val = df['rsi'].iloc[-1] if 'rsi' in df.columns else None
     
     macd_df = ta.macd(df['close'], fast=12, slow=26, signal=9)
