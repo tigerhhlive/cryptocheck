@@ -37,6 +37,9 @@ logging.basicConfig(
 last_alert_time = 0
 last_heartbeat_time = 0
 
+# -------------------------------
+# ارسال پیام به تلگرام
+# -------------------------------
 def send_telegram_message(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
@@ -47,6 +50,9 @@ def send_telegram_message(message):
     except Exception as e:
         logging.error(f"Exception در ارسال پیام تلگرام: {e}")
 
+# -------------------------------
+# تحلیل تکنیکال و الگوریتم‌ها
+# -------------------------------
 def is_ranging_market(df):
     adx = ta.adx(df['high'], df['low'], df['close'], length=14)['ADX_14']
     return adx.iloc[-1] < 20
@@ -166,18 +172,21 @@ def analyze_symbol_mtf(symbol):
 
 def monitor():
     symbols = [
-        "BTCUSDT", "ETHUSDT", "SHIBUSDT", "NEARUSDT", "SOLUSDT",
-        "DOGEUSDT", "BNBUSDT", "MOODENGUSDT", "ZECUSDT", "ONEUSDT",
-        "RSRUSDT", "HOTUSDT", "XLMUSDT", "SONICUSDT", "CAKEUSDT"
+        "BTCUSDT", "ETHUSDT", "SHIBUSDT", "NEARUSDT",
+        "SOLUSDT", "DOGEUSDT", "BNBUSDT", "MOODENGUSDT",
+        "ZECUSDT", "ONEUSDT", "RSRUSDT", "HOTUSDT",
+        "XLMUSDT", "SONICUSDT", "CAKEUSDT"
     ]
     while True:
         for sym in symbols:
             try:
                 msg = analyze_symbol_mtf(sym)
-                if "سیگنالی یافت نشد" not in msg:
+                if "ورود به پوزیشن" in msg:
                     send_telegram_message(msg)
+                else:
+                    logging.info(f"{sym} — بدون سیگنال: {msg.strip()}")
             except Exception as e:
-                logging.error(f"Error analyzing {sym}: {e}")
+                logging.error(f"خطا در تحلیل {sym}: {e}")
         time.sleep(600)
 
 @app.route('/')
