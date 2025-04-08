@@ -99,6 +99,9 @@ def analyze_symbol(symbol, timeframe='15m'):
     if is_ranging_market(df):
         return None
 
+    df['EMA20'] = ta.ema(df['close'], length=20)
+    df['EMA50'] = ta.ema(df['close'], length=50)
+
     rsi = ta.rsi(df['close'], length=14)
     df['rsi'] = rsi
     macd = ta.macd(df['close'])
@@ -117,12 +120,15 @@ def analyze_symbol(symbol, timeframe='15m'):
     atr = ta.atr(df['high'], df['low'], df['close']).iloc[-1]
     risk = max(atr, entry * MIN_PERCENT_RISK)
 
+    above_ema = candle['close'] > candle['EMA20'] and candle['EMA20'] > candle['EMA50']
+    below_ema = candle['close'] < candle['EMA20'] and candle['EMA20'] < candle['EMA50']
+
     direction = None
     if signal_type == 'bullish_marubozu' or signal_type == 'bullish_engulfing':
-        if rsi_val < 65 and df['MACD'].iloc[-1] > df['MACDs'].iloc[-1] and adx_val > ADX_THRESHOLD:
+        if rsi_val < 65 and df['MACD'].iloc[-1] > df['MACDs'].iloc[-1] and adx_val > ADX_THRESHOLD and above_ema:
             direction = 'Long'
     elif signal_type == 'bearish_marubozu' or signal_type == 'bearish_engulfing':
-        if rsi_val > 35 and df['MACD'].iloc[-1] < df['MACDs'].iloc[-1] and adx_val > ADX_THRESHOLD:
+        if rsi_val > 35 and df['MACD'].iloc[-1] < df['MACDs'].iloc[-1] and adx_val > ADX_THRESHOLD and below_ema:
             direction = 'Short'
 
     if direction:
@@ -135,15 +141,17 @@ def analyze_symbol(symbol, timeframe='15m'):
             tp1 = entry - risk * TP1_MULTIPLIER
             tp2 = entry - risk * TP2_MULTIPLIER
 
+        rr_ratio = abs(tp1 - entry) / abs(entry - sl)
+
         return f"""
 🚨 This Is AI Signal Alert . Ignore it 🚨
 Symbol: {symbol}
-Signal: BUY MARKET if {direction == 'Long'} else SELL MARKET
+Signal: {'BUY MARKET' if direction == 'Long' else 'SELL MARKET'}
 Price: {entry:.6f}
 Stop Loss: {sl:.6f}  
 Target Level 1: {tp1:.6f}
 Target Level 2: {tp2:.6f}
-leverage : {(tp1-entry)/(entry-sl):.2f}X
+leverage : {rr_ratio:.2f}X
 """
     return None
 
