@@ -23,15 +23,14 @@ HEARTBEAT_INTERVAL = 3600
 
 ADX_THRESHOLD = 25
 ATR_PERIOD = 14
-ATR_MULTIPLIER_SL = 1.5
-TP1_MULTIPLIER = 1.0
-TP2_MULTIPLIER = 1.5
-TP3_MULTIPLIER = 2.0
-MIN_PERCENT_RISK = 0.05
+ATR_MULTIPLIER_SL = 1.2
+TP1_MULTIPLIER = 0.6
+TP2_MULTIPLIER = 0.9
+TP3_MULTIPLIER = 1.3
+MIN_PERCENT_RISK = 0.03
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', filename='ai_signal_log.txt')
 
-# ارسال پیام به تلگرام فقط در صورت وجود سیگنال
 def send_telegram_message(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
@@ -42,7 +41,6 @@ def send_telegram_message(message):
     except Exception as e:
         logging.error(f"Exception در ارسال پیام تلگرام: {e}")
 
-# دریافت داده و اندیکاتورها
 def get_data(timeframe, symbol):
     url = "https://min-api.cryptocompare.com/data/v2/histominute"
     aggregate = 5 if timeframe == '5m' else 15
@@ -66,7 +64,7 @@ def is_ranging_market(df):
     adx = ta.adx(df['high'], df['low'], df['close'], length=14)['ADX_14']
     return adx.iloc[-1] < 20
 
-def detect_strong_candle(row, threshold=0.9):
+def detect_strong_candle(row, threshold=0.85):
     body = abs(row['close'] - row['open'])
     candle_range = row['high'] - row['low']
     if candle_range == 0:
@@ -92,12 +90,8 @@ def analyze_symbol(symbol, timeframe='15m'):
     if len(df) < 3:
         return None
 
-    if is_ranging_market(df):
-        return None
-
     df['EMA20'] = ta.ema(df['close'], length=20)
     df['EMA50'] = ta.ema(df['close'], length=50)
-
     rsi = ta.rsi(df['close'], length=14)
     df['rsi'] = rsi
     macd = ta.macd(df['close'])
@@ -105,8 +99,6 @@ def analyze_symbol(symbol, timeframe='15m'):
     df['MACDs'] = macd['MACDs_12_26_9']
     adx = ta.adx(df['high'], df['low'], df['close'])
     df['ADX'] = adx['ADX_14']
-    df['DI+'] = adx['DMP_14']
-    df['DI-'] = adx['DMN_14']
 
     candle = df.iloc[-1]
     signal_type = detect_strong_candle(candle) or detect_engulfing(df)
@@ -118,6 +110,11 @@ def analyze_symbol(symbol, timeframe='15m'):
 
     above_ema = candle['close'] > candle['EMA20'] and candle['EMA20'] > candle['EMA50']
     below_ema = candle['close'] < candle['EMA20'] and candle['EMA20'] < candle['EMA50']
+
+    # potential message
+    potential_msg = f"🔎 Potential Signal ({symbol})\nType: {signal_type or 'None'}\nRSI: {rsi_val:.2f}\nADX: {adx_val:.2f}\nEMA: {'above' if above_ema else ('below' if below_ema else 'in range')}\n"
+    send_telegram_message(potential_msg)
+    logging.info(potential_msg)
 
     direction = None
     if signal_type == 'bullish_marubozu' or signal_type == 'bullish_engulfing':
@@ -138,17 +135,19 @@ def analyze_symbol(symbol, timeframe='15m'):
             tp2 = entry - risk * TP2_MULTIPLIER
 
         rr_ratio = abs(tp1 - entry) / abs(entry - sl)
-
-        return f"""
-🚨 This Is AI Signal Alert . Ignore it 🚨
+        signal_msg = f"""
+🚨 AI Signal Alert 🚨
 Symbol: {symbol}
 Signal: {'BUY MARKET' if direction == 'Long' else 'SELL MARKET'}
 Price: {entry:.6f}
-Stop Loss: {sl:.6f}  
-Target Level 1: {tp1:.6f}
-Target Level 2: {tp2:.6f}
-leverage : {rr_ratio:.2f}X
+Stop Loss: {sl:.6f}
+TP1: {tp1:.6f}
+TP2: {tp2:.6f}
+RR: {rr_ratio:.2f}X
 """
+        logging.info(signal_msg)
+        return signal_msg
+
     return None
 
 def analyze_symbol_mtf(symbol):
