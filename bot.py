@@ -2,11 +2,11 @@ import os
 import time
 import logging
 import requests
-from statistics import mean, stdev
 import threading
 import pandas as pd
 import pandas_ta as ta
 from flask import Flask
+from datetime import datetime
 
 app = Flask(__name__)
 
@@ -14,22 +14,20 @@ CRYPTOCOMPARE_API_KEY = os.environ.get('CRYPTOCOMPARE_API_KEY')
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
 
-NUM_CANDLES = 60
-VOLUME_MULTIPLIER = 1.2
-PRICE_CHANGE_THRESHOLD = 0.8
-STD_MULTIPLIER = 1.0
-ALERT_COOLDOWN = 900
-HEARTBEAT_INTERVAL = 3600
-
+# تنظیمات
 ADX_THRESHOLD = 25
 ATR_PERIOD = 14
 ATR_MULTIPLIER_SL = 1.2
-TP1_MULTIPLIER = 0.6
-TP2_MULTIPLIER = 0.9
-TP3_MULTIPLIER = 1.3
+TP1_MULTIPLIER = 0.8
+TP2_MULTIPLIER = 1.2
 MIN_PERCENT_RISK = 0.03
+HEARTBEAT_INTERVAL = 7200  # هر دو ساعت
+CHECK_INTERVAL = 600  # چک هر 10 دقیقه
+SLEEP_HOURS = (0, 7)  # از ساعت 00 تا 07 ربات خاموش شود (ساعت ایران)
+MIN_ATR = 0.001
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', filename='ai_signal_log.txt')
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+log_file = open("ai_signal_log.txt", "a")
 
 def send_telegram_message(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -60,11 +58,7 @@ def get_data(timeframe, symbol):
     df['volume'] = df['volumeto']
     return df[['timestamp', 'open', 'high', 'low', 'close', 'volume']]
 
-def is_ranging_market(df):
-    adx = ta.adx(df['high'], df['low'], df['close'], length=14)['ADX_14']
-    return adx.iloc[-1] < 20
-
-def detect_strong_candle(row, threshold=0.85):
+def detect_strong_candle(row, threshold=0.7):
     body = abs(row['close'] - row['open'])
     candle_range = row['high'] - row['low']
     if candle_range == 0:
@@ -85,6 +79,11 @@ def detect_engulfing(df):
         return 'bearish_engulfing'
     return None
 
+def detect_spike(df, multiplier=2.2):
+    avg_body = df.iloc[-20:-1].apply(lambda row: abs(row['close'] - row['open']), axis=1).mean()
+    last_body = abs(df.iloc[-1]['close'] - df.iloc[-1]['open'])
+    return last_body > avg_body * multiplier
+
 def analyze_symbol(symbol, timeframe='15m'):
     df = get_data(timeframe, symbol)
     if len(df) < 3:
@@ -92,13 +91,14 @@ def analyze_symbol(symbol, timeframe='15m'):
 
     df['EMA20'] = ta.ema(df['close'], length=20)
     df['EMA50'] = ta.ema(df['close'], length=50)
-    rsi = ta.rsi(df['close'], length=14)
-    df['rsi'] = rsi
+    df['rsi'] = ta.rsi(df['close'], length=14)
     macd = ta.macd(df['close'])
     df['MACD'] = macd['MACD_12_26_9']
     df['MACDs'] = macd['MACDs_12_26_9']
     adx = ta.adx(df['high'], df['low'], df['close'])
     df['ADX'] = adx['ADX_14']
+    df['DI+'] = adx['DMP_14']
+    df['DI-'] = adx['DMN_14']
 
     candle = df.iloc[-1]
     signal_type = detect_strong_candle(candle) or detect_engulfing(df)
@@ -106,15 +106,10 @@ def analyze_symbol(symbol, timeframe='15m'):
     adx_val = df['ADX'].iloc[-1]
     entry = df['close'].iloc[-1]
     atr = ta.atr(df['high'], df['low'], df['close']).iloc[-1]
-    risk = max(atr, entry * MIN_PERCENT_RISK)
+    atr = max(atr, entry * MIN_PERCENT_RISK, MIN_ATR)
 
     above_ema = candle['close'] > candle['EMA20'] and candle['EMA20'] > candle['EMA50']
     below_ema = candle['close'] < candle['EMA20'] and candle['EMA20'] < candle['EMA50']
-
-    # potential message
-    potential_msg = f"🔎 Potential Signal ({symbol})\nType: {signal_type or 'None'}\nRSI: {rsi_val:.2f}\nADX: {adx_val:.2f}\nEMA: {'above' if above_ema else ('below' if below_ema else 'in range')}\n"
-    send_telegram_message(potential_msg)
-    logging.info(potential_msg)
 
     direction = None
     if signal_type == 'bullish_marubozu' or signal_type == 'bullish_engulfing':
@@ -124,30 +119,29 @@ def analyze_symbol(symbol, timeframe='15m'):
         if rsi_val > 35 and df['MACD'].iloc[-1] < df['MACDs'].iloc[-1] and adx_val > ADX_THRESHOLD and below_ema:
             direction = 'Short'
 
-    if direction:
-        if direction == 'Long':
-            sl = entry - risk * ATR_MULTIPLIER_SL
-            tp1 = entry + risk * TP1_MULTIPLIER
-            tp2 = entry + risk * TP2_MULTIPLIER
-        else:
-            sl = entry + risk * ATR_MULTIPLIER_SL
-            tp1 = entry - risk * TP1_MULTIPLIER
-            tp2 = entry - risk * TP2_MULTIPLIER
+    if not direction and symbol == 'BTCUSDT' and detect_spike(df):
+        direction = 'SPK'
 
+    if direction == 'SPK':
+        msg = f"⚡ BTCUSDT Spike Alert!\nTime: {df['timestamp'].iloc[-1]}\nClose: {entry:.2f}"
+        send_telegram_message(msg)
+        return None
+
+    if direction:
+        sl = entry - atr * ATR_MULTIPLIER_SL if direction == 'Long' else entry + atr * ATR_MULTIPLIER_SL
+        tp1 = entry + atr * TP1_MULTIPLIER if direction == 'Long' else entry - atr * TP1_MULTIPLIER
+        tp2 = entry + atr * TP2_MULTIPLIER if direction == 'Long' else entry - atr * TP2_MULTIPLIER
         rr_ratio = abs(tp1 - entry) / abs(entry - sl)
-        signal_msg = f"""
-🚨 AI Signal Alert 🚨
+        return f"""
+🚨 This Is AI Signal Alert . Ignore it 🚨
 Symbol: {symbol}
 Signal: {'BUY MARKET' if direction == 'Long' else 'SELL MARKET'}
 Price: {entry:.6f}
-Stop Loss: {sl:.6f}
-TP1: {tp1:.6f}
-TP2: {tp2:.6f}
-RR: {rr_ratio:.2f}X
+Stop Loss: {sl:.6f}  
+Target Level 1: {tp1:.6f}
+Target Level 2: {tp2:.6f}
+leverage : {rr_ratio:.2f}X
 """
-        logging.info(signal_msg)
-        return signal_msg
-
     return None
 
 def analyze_symbol_mtf(symbol):
@@ -158,12 +152,20 @@ def analyze_symbol_mtf(symbol):
     return None
 
 def monitor():
-    symbols = [
-        "BTCUSDT", "ETHUSDT", "SHIBUSDT", "NEARUSDT", "SOLUSDT", "DOGEUSDT",
-        "BNBUSDT", "MOODENGUSDT", "ZECUSDT", "ONEUSDT", "RSRUSDT",
-        "HOTUSDT", "XLMUSDT", "SONICUSDT", "CAKEUSDT"
-    ]
+    symbols = ["BTCUSDT", "ETHUSDT", "DOGEUSDT", "BNBUSDT", "XRPUSDT"]
+    last_heartbeat = 0
     while True:
+        now = datetime.utcnow()
+        tehran_hour = (now.hour + 3) % 24
+        if SLEEP_HOURS[0] <= tehran_hour < SLEEP_HOURS[1]:
+            logging.info("ربات در حالت خواب شبانه است")
+            time.sleep(60)
+            continue
+
+        if time.time() - last_heartbeat > HEARTBEAT_INTERVAL:
+            send_telegram_message("🤖 ربات فعال است و در حال بررسی سیگنال‌ها می‌باشد")
+            last_heartbeat = time.time()
+
         for sym in symbols:
             try:
                 msg = analyze_symbol_mtf(sym)
@@ -171,7 +173,7 @@ def monitor():
                     send_telegram_message(msg)
             except Exception as e:
                 logging.error(f"Error analyzing {sym}: {e}")
-        time.sleep(600)
+        time.sleep(CHECK_INTERVAL)
 
 @app.route('/')
 def home():
