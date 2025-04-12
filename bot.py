@@ -15,19 +15,16 @@ TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
 
 # تنظیمات
-ADX_THRESHOLD = 25
-ATR_PERIOD = 14
 ATR_MULTIPLIER_SL = 1.2
-TP1_MULTIPLIER = 0.8
-TP2_MULTIPLIER = 1.2
-MIN_PERCENT_RISK = 0.03
-HEARTBEAT_INTERVAL = 7200  # هر دو ساعت
-CHECK_INTERVAL = 600  # چک هر 10 دقیقه
-SLEEP_HOURS = (0, 7)  # از ساعت 00 تا 07 ربات خاموش شود (ساعت ایران)
-MIN_ATR = 0.001
+TP1_MULTIPLIER = 1.0
+TP2_MULTIPLIER = 2.0
+MIN_PERCENT_RISK = 0.02
+HEARTBEAT_INTERVAL = 7200
+CHECK_INTERVAL = 600
+SLEEP_HOURS = (0, 7)
+RSI_LIMIT = 85
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-log_file = open("ai_signal_log.txt", "a")
 
 def send_telegram_message(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -58,79 +55,61 @@ def get_data(timeframe, symbol):
     df['volume'] = df['volumeto']
     return df[['timestamp', 'open', 'high', 'low', 'close', 'volume']]
 
-def detect_strong_candle(row, threshold=0.7):
+def detect_candle_patterns(df):
+    row = df.iloc[-1]
+    prev = df.iloc[-2]
     body = abs(row['close'] - row['open'])
     candle_range = row['high'] - row['low']
-    if candle_range == 0:
-        return None
-    ratio = body / candle_range
-    if ratio > threshold:
-        return 'bullish_marubozu' if row['close'] > row['open'] else 'bearish_marubozu'
-    return None
-
-def detect_engulfing(df):
-    if len(df) < 2:
-        return None
-    prev = df.iloc[-2]
-    curr = df.iloc[-1]
-    if prev['close'] < prev['open'] and curr['close'] > curr['open'] and curr['close'] > prev['open'] and curr['open'] < prev['close']:
-        return 'bullish_engulfing'
-    if prev['close'] > prev['open'] and curr['close'] < curr['open'] and curr['open'] > prev['close'] and curr['close'] < prev['open']:
-        return 'bearish_engulfing'
-    return None
-
-def detect_spike(df, multiplier=2.2):
-    avg_body = df.iloc[-20:-1].apply(lambda row: abs(row['close'] - row['open']), axis=1).mean()
-    last_body = abs(df.iloc[-1]['close'] - df.iloc[-1]['open'])
-    return last_body > avg_body * multiplier
+    ratio = body / candle_range if candle_range != 0 else 0
+    avg_range = (df['high'] - df['low']).rolling(14).mean().iloc[-1]
+    strong_bull = ratio > 0.65 and row['close'] > row['open'] and candle_range > avg_range
+    strong_bear = ratio > 0.65 and row['close'] < row['open'] and candle_range > avg_range
+    bullish_eng = prev['close'] < prev['open'] and row['close'] > row['open'] and row['close'] > prev['open'] and row['open'] < prev['close']
+    bearish_eng = prev['close'] > prev['open'] and row['close'] < row['open'] and row['open'] > prev['close'] and row['close'] < prev['open']
+    return strong_bull or bullish_eng, strong_bear or bearish_eng
 
 def analyze_symbol(symbol, timeframe='15m'):
     df = get_data(timeframe, symbol)
-    if len(df) < 3:
+    if len(df) < 20:
         return None
 
     df['EMA20'] = ta.ema(df['close'], length=20)
     df['EMA50'] = ta.ema(df['close'], length=50)
+    df['EMA200'] = ta.ema(df['close'], length=200)
     df['rsi'] = ta.rsi(df['close'], length=14)
     macd = ta.macd(df['close'])
     df['MACD'] = macd['MACD_12_26_9']
     df['MACDs'] = macd['MACDs_12_26_9']
-    adx = ta.adx(df['high'], df['low'], df['close'])
-    df['ADX'] = adx['ADX_14']
-    df['DI+'] = adx['DMP_14']
-    df['DI-'] = adx['DMN_14']
+    df['atr'] = ta.atr(df['high'], df['low'], df['close'], length=14)
 
-    candle = df.iloc[-1]
-    signal_type = detect_strong_candle(candle) or detect_engulfing(df)
-    rsi_val = df['rsi'].iloc[-1]
-    adx_val = df['ADX'].iloc[-1]
-    entry = df['close'].iloc[-1]
-    atr = ta.atr(df['high'], df['low'], df['close']).iloc[-1]
-    atr = max(atr, entry * MIN_PERCENT_RISK, MIN_ATR)
+    row = df.iloc[-1]
+    bull_cond, bear_cond = detect_candle_patterns(df)
+    rsi = row['rsi']
+    macd_ok_long = row['MACD'] > row['MACDs']
+    macd_ok_short = row['MACD'] < row['MACDs']
+    above_ema = row['close'] > row['EMA20'] and row['EMA20'] > row['EMA50']
+    below_ema = row['close'] < row['EMA20'] and row['EMA20'] < row['EMA50']
+    above_ema200 = row['close'] > row['EMA200']
 
-    above_ema = candle['close'] > candle['EMA20'] and candle['EMA20'] > candle['EMA50']
-    below_ema = candle['close'] < candle['EMA20'] and candle['EMA20'] < candle['EMA50']
+    risk = max(row['atr'], row['close'] * MIN_PERCENT_RISK)
+    entry = row['close']
+    sl_long = entry - risk * ATR_MULTIPLIER_SL
+    tp1_long = entry + risk * TP1_MULTIPLIER
+    tp2_long = entry + risk * TP2_MULTIPLIER
+    sl_short = entry + risk * ATR_MULTIPLIER_SL
+    tp1_short = entry - risk * TP1_MULTIPLIER
+    tp2_short = entry - risk * TP2_MULTIPLIER
 
     direction = None
-    if signal_type == 'bullish_marubozu' or signal_type == 'bullish_engulfing':
-        if rsi_val < 65 and df['MACD'].iloc[-1] > df['MACDs'].iloc[-1] and adx_val > ADX_THRESHOLD and above_ema:
-            direction = 'Long'
-    elif signal_type == 'bearish_marubozu' or signal_type == 'bearish_engulfing':
-        if rsi_val > 35 and df['MACD'].iloc[-1] < df['MACDs'].iloc[-1] and adx_val > ADX_THRESHOLD and below_ema:
-            direction = 'Short'
-
-    if not direction and symbol == 'BTCUSDT' and detect_spike(df):
-        direction = 'SPK'
-
-    if direction == 'SPK':
-        msg = f"⚡ BTCUSDT Spike Alert!\nTime: {df['timestamp'].iloc[-1]}\nClose: {entry:.2f}"
-        send_telegram_message(msg)
-        return None
+    if bull_cond and rsi < RSI_LIMIT and macd_ok_long and (above_ema or above_ema200):
+        direction = 'Long'
+    elif bear_cond and rsi > 30 and macd_ok_short and below_ema:
+        direction = 'Short'
 
     if direction:
-        sl = entry - atr * ATR_MULTIPLIER_SL if direction == 'Long' else entry + atr * ATR_MULTIPLIER_SL
-        tp1 = entry + atr * TP1_MULTIPLIER if direction == 'Long' else entry - atr * TP1_MULTIPLIER
-        tp2 = entry + atr * TP2_MULTIPLIER if direction == 'Long' else entry - atr * TP2_MULTIPLIER
+        sl = sl_long if direction == 'Long' else sl_short
+        tp1 = tp1_long if direction == 'Long' else tp1_short
+        tp2 = tp2_long if direction == 'Long' else tp2_short
         rr_ratio = abs(tp1 - entry) / abs(entry - sl)
         return f"""
 🚨 This Is AI Signal Alert . Ignore it 🚨
