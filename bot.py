@@ -147,15 +147,14 @@ def analyze_symbol(symbol, timeframe='15m'):
         TP2_MULT = round(TP1_MULT * 1.5, 1)
         tp1 = entry + atr * TP1_MULT if direction == 'Long' else entry - atr * TP1_MULT
         tp2 = entry + atr * TP2_MULT if direction == 'Long' else entry - atr * TP2_MULT
-        return f"""
-🚨 *AI Signal Alert*
+        return f"🚨 *AI Signal Alert*
 *Symbol:* `{symbol}`
 *Signal:* {'🟢 BUY MARKET' if direction == 'Long' else '🔴 SELL MARKET'}
 *Entry:* `{entry:.6f}`
 *Stop Loss:* `{sl:.6f}`
 *Target 1:* `{tp1:.6f}`
 *Target 2:* `{tp2:.6f}`
-*Leverage (est.):* `{rr_ratio:.2f}X`"""
+*Leverage (est.):* `{rr_ratio:.2f}X`", None"""
 """, None
 
     return None, "❌ No signal: " + ", ".join(reason)
