@@ -194,8 +194,7 @@ def monitor():
                 
             except Exception as e:
                 logging.error(f"Error analyzing {sym}: {e}")
-        )
-
+    
         time.sleep(CHECK_INTERVAL)
 
 @app.route('/')
