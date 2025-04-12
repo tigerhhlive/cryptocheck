@@ -111,12 +111,34 @@ def analyze_symbol(symbol, timeframe='15m'):
     below_ema = candle['close'] < candle['EMA20'] and candle['EMA20'] < candle['EMA50']
 
     direction = None
-    if signal_type == 'bullish_marubozu' or signal_type == 'bullish_engulfing':
-        if rsi_val < 65 and df['MACD'].iloc[-1] > df['MACDs'].iloc[-1] and adx_val > ADX_THRESHOLD and above_ema:
+    reason = []
+
+    if signal_type in ['bullish_marubozu', 'bullish_engulfing']:
+        if rsi_val >= 65:
+            reason.append("RSI too high")
+        if df['MACD'].iloc[-1] <= df['MACDs'].iloc[-1]:
+            reason.append("MACD not above signal")
+        if adx_val <= ADX_THRESHOLD:
+            reason.append("ADX too low")
+        if not above_ema:
+            reason.append("EMA alignment not bullish")
+        if not reason:
             direction = 'Long'
-    elif signal_type == 'bearish_marubozu' or signal_type == 'bearish_engulfing':
-        if rsi_val > 35 and df['MACD'].iloc[-1] < df['MACDs'].iloc[-1] and adx_val > ADX_THRESHOLD and below_ema:
+
+    elif signal_type in ['bearish_marubozu', 'bearish_engulfing']:
+        if rsi_val <= 35:
+            reason.append("RSI too low")
+        if df['MACD'].iloc[-1] >= df['MACDs'].iloc[-1]:
+            reason.append("MACD not below signal")
+        if adx_val <= ADX_THRESHOLD:
+            reason.append("ADX too low")
+        if not below_ema:
+            reason.append("EMA alignment not bearish")
+        if not reason:
             direction = 'Short'
+
+    if not signal_type:
+        reason = ["No strong candle"]
 
     if not direction and symbol == 'BTCUSDT' and detect_spike(df):
         direction = 'SPK'
@@ -141,7 +163,7 @@ Target Level 2: {tp2:.6f}
 leverage : {rr_ratio:.2f}X
 """, None
 
-    return None, "❌ No strong candle"
+    return None, "❌ " + ", ".join(reason)
 
 def analyze_symbol_mtf(symbol):
     a5, reason5 = analyze_symbol(symbol, '5m')
