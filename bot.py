@@ -24,7 +24,7 @@ HEARTBEAT_INTERVAL = 7200
 CHECK_INTERVAL = 600
 SLEEP_HOURS = (0, 7)
 MIN_ATR = 0.001
-SIGNAL_COOLDOWN = 1800  # 30 minutes cooldown per symbol/direction
+SIGNAL_COOLDOWN = 1800
 
 last_signals = {}
 
@@ -143,15 +143,19 @@ def analyze_symbol(symbol, timeframe='15m'):
         tp1 = entry + atr * TP1_MULTIPLIER if direction == 'Long' else entry - atr * TP1_MULTIPLIER
         tp2 = entry + atr * TP2_MULTIPLIER if direction == 'Long' else entry - atr * TP2_MULTIPLIER
         rr_ratio = abs(tp1 - entry) / abs(entry - sl)
+        TP1_MULT = max(1.5, round(rr_ratio * 1.1, 1))
+        TP2_MULT = round(TP1_MULT * 1.5, 1)
+        tp1 = entry + atr * TP1_MULT if direction == 'Long' else entry - atr * TP1_MULT
+        tp2 = entry + atr * TP2_MULT if direction == 'Long' else entry - atr * TP2_MULT
         return f"""
-🚨 AI Signal Alert
-Symbol: {symbol}
-Signal: {'BUY MARKET' if direction == 'Long' else 'SELL MARKET'}
-Price: {entry:.6f}
-Stop Loss: {sl:.6f}  
-Target 1: {tp1:.6f}
-Target 2: {tp2:.6f}
-Leverage: {rr_ratio:.2f}X
+🚨 *AI Signal Alert*
+*Symbol:* `{symbol}`
+*Signal:* {'🟢 BUY MARKET' if direction == 'Long' else '🔴 SELL MARKET'}
+*Entry:* `{entry:.6f}`
+*Stop Loss:* `{sl:.6f}`
+*Target 1:* `{tp1:.6f}`
+*Target 2:* `{tp2:.6f}`
+*Leverage (est.):* `{rr_ratio:.2f}X`"""
 """, None
 
     return None, "❌ No signal: " + ", ".join(reason)
@@ -159,7 +163,7 @@ Leverage: {rr_ratio:.2f}X
 def analyze_symbol_mtf(symbol):
     a5, reason5 = analyze_symbol(symbol, '5m')
     a15, reason15 = analyze_symbol(symbol, '15m')
-    if a5 and a15 and (('BUY' in a5 and 'BUY' in a15) or ('SELL' in a5 and 'SELL' in a15)):
+    if a5 and a15 and (("BUY" in a5 and "BUY" in a15) or ("SELL" in a5 and "SELL" in a15)):
         return a15, None
     return None, reason15 or reason5
 
@@ -192,8 +196,7 @@ def monitor():
                     all_reasons.append(f"❌ {sym}: {reason}")
             except Exception as e:
                 logging.error(f"Error analyzing {sym}: {e}")
-        if all_reasons:
-            send_telegram_message("📡 No Signals in This Cycle\n" + "\n".join(all_reasons))
+        )
 
         time.sleep(CHECK_INTERVAL)
 
