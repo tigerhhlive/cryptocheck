@@ -195,7 +195,8 @@ def monitor():
                     all_reasons.append(f"❌ {sym}: {reason}")
             except Exception as e:
                 logging.error(f"Error analyzing {sym}: {e}")
-        )
+        if all_reasons:
+            send_telegram_message("📡 No Signals in This Cycle\n" + "\n".join(all_reasons))
 
         time.sleep(CHECK_INTERVAL)
 
