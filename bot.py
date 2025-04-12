@@ -14,16 +14,19 @@ CRYPTOCOMPARE_API_KEY = os.environ.get('CRYPTOCOMPARE_API_KEY')
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
 
-ADX_THRESHOLD = 25
+ADX_THRESHOLD = 20
 ATR_PERIOD = 14
 ATR_MULTIPLIER_SL = 1.2
-TP1_MULTIPLIER = 0.8
-TP2_MULTIPLIER = 1.2
+TP1_MULTIPLIER = 1.8
+TP2_MULTIPLIER = 2.8
 MIN_PERCENT_RISK = 0.03
 HEARTBEAT_INTERVAL = 7200
 CHECK_INTERVAL = 600
 SLEEP_HOURS = (0, 7)
 MIN_ATR = 0.001
+SIGNAL_COOLDOWN = 1800  # 30 minutes cooldown per symbol/direction
+
+last_signals = {}
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 log_file = open("ai_signal_log.txt", "a")
@@ -83,6 +86,15 @@ def detect_spike(df, multiplier=2.2):
     last_body = abs(df.iloc[-1]['close'] - df.iloc[-1]['open'])
     return last_body > avg_body * multiplier
 
+def check_cooldown(symbol, direction):
+    key = f"{symbol}_{direction}"
+    last_time = last_signals.get(key)
+    now = time.time()
+    if last_time and (now - last_time < SIGNAL_COOLDOWN):
+        return False
+    last_signals[key] = now
+    return True
+
 def analyze_symbol(symbol, timeframe='15m'):
     df = get_data(timeframe, symbol)
     if len(df) < 3:
@@ -110,42 +122,21 @@ def analyze_symbol(symbol, timeframe='15m'):
     above_ema = candle['close'] > candle['EMA20'] and candle['EMA20'] > candle['EMA50']
     below_ema = candle['close'] < candle['EMA20'] and candle['EMA20'] < candle['EMA50']
 
-    direction = None
-    reason = []
+    conditions = {
+        "rsi": rsi_val >= 50 if signal_type and 'bullish' in signal_type else rsi_val <= 50,
+        "macd": (df['MACD'].iloc[-1] > df['MACDs'].iloc[-1]) if 'bullish' in str(signal_type) else (df['MACD'].iloc[-1] < df['MACDs'].iloc[-1]),
+        "adx": adx_val > ADX_THRESHOLD,
+        "ema": above_ema if 'bullish' in str(signal_type) else below_ema,
+    }
 
-    if signal_type in ['bullish_marubozu', 'bullish_engulfing']:
-        if rsi_val >= 65:
-            reason.append("RSI too high")
-        if df['MACD'].iloc[-1] <= df['MACDs'].iloc[-1]:
-            reason.append("MACD not above signal")
-        if adx_val <= ADX_THRESHOLD:
-            reason.append("ADX too low")
-        if not above_ema:
-            reason.append("EMA alignment not bullish")
-        if not reason:
-            direction = 'Long'
+    valid_conditions = sum(1 for v in conditions.values() if v)
+    direction = 'Long' if 'bullish' in str(signal_type) and valid_conditions >= 3 else \
+                'Short' if 'bearish' in str(signal_type) and valid_conditions >= 3 else None
 
-    elif signal_type in ['bearish_marubozu', 'bearish_engulfing']:
-        if rsi_val <= 35:
-            reason.append("RSI too low")
-        if df['MACD'].iloc[-1] >= df['MACDs'].iloc[-1]:
-            reason.append("MACD not below signal")
-        if adx_val <= ADX_THRESHOLD:
-            reason.append("ADX too low")
-        if not below_ema:
-            reason.append("EMA alignment not bearish")
-        if not reason:
-            direction = 'Short'
+    reason = [] if direction else [k for k, v in conditions.items() if not v]
 
-    if not signal_type:
-        reason = ["No strong candle"]
-
-    if not direction and symbol == 'BTCUSDT' and detect_spike(df):
-        direction = 'SPK'
-
-    if direction == 'SPK':
-        msg = f"⚡ BTCUSDT Spike Alert!\nTime: {df['timestamp'].iloc[-1]}\nClose: {entry:.2f}"
-        return msg, None
+    if direction and not check_cooldown(symbol, direction):
+        return None, "Duplicate signal cooldown"
 
     if direction:
         sl = entry - atr * ATR_MULTIPLIER_SL if direction == 'Long' else entry + atr * ATR_MULTIPLIER_SL
@@ -153,17 +144,17 @@ def analyze_symbol(symbol, timeframe='15m'):
         tp2 = entry + atr * TP2_MULTIPLIER if direction == 'Long' else entry - atr * TP2_MULTIPLIER
         rr_ratio = abs(tp1 - entry) / abs(entry - sl)
         return f"""
-🚨 This Is AI Signal Alert . Ignore it 🚨
+🚨 AI Signal Alert
 Symbol: {symbol}
 Signal: {'BUY MARKET' if direction == 'Long' else 'SELL MARKET'}
 Price: {entry:.6f}
 Stop Loss: {sl:.6f}  
-Target Level 1: {tp1:.6f}
-Target Level 2: {tp2:.6f}
-leverage : {rr_ratio:.2f}X
+Target 1: {tp1:.6f}
+Target 2: {tp2:.6f}
+Leverage: {rr_ratio:.2f}X
 """, None
 
-    return None, "❌ " + ", ".join(reason)
+    return None, "❌ No signal: " + ", ".join(reason)
 
 def analyze_symbol_mtf(symbol):
     a5, reason5 = analyze_symbol(symbol, '5m')
