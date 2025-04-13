@@ -96,6 +96,7 @@ def check_cooldown(symbol, direction):
     return True
 
 def analyze_symbol(symbol, timeframe='15m'):
+    log_prefix = f"[{datetime.utcnow()}] {symbol} [{timeframe}]"
     df = get_data(timeframe, symbol)
     if len(df) < 3:
         return None, None
@@ -136,9 +137,13 @@ def analyze_symbol(symbol, timeframe='15m'):
     reason = [] if direction else [k for k, v in conditions.items() if not v]
 
     if direction and not check_cooldown(symbol, direction):
+        log_file.write(f"{log_prefix} - DUPLICATE SIGNAL - Skipped due to cooldown
+")
         return None, "Duplicate signal cooldown"
 
     if direction:
+        log_file.write(f"{log_prefix} - SIGNAL: {'BUY' if direction == 'Long' else 'SELL'} | Conditions Passed: {valid_conditions}/4
+")
         sl = entry - atr * ATR_MULTIPLIER_SL if direction == 'Long' else entry + atr * ATR_MULTIPLIER_SL
         tp1 = entry + atr * TP1_MULTIPLIER if direction == 'Long' else entry - atr * TP1_MULTIPLIER
         tp2 = entry + atr * TP2_MULTIPLIER if direction == 'Long' else entry - atr * TP2_MULTIPLIER
@@ -157,7 +162,9 @@ def analyze_symbol(symbol, timeframe='15m'):
 *Leverage (est.):* `{rr_ratio:.2f}X`"""
         return message, None
 
-    return None, "❌ No signal: " + ", ".join(reason)
+    log_file.write(f"{log_prefix} - NO SIGNAL | Conditions Passed: {valid_conditions}/4 | Failed: {', '.join(reason)}
+")
+    return None, None
 
 def analyze_symbol_mtf(symbol):
     a5, reason5 = analyze_symbol(symbol, '5m')
@@ -194,7 +201,6 @@ def monitor():
                 
             except Exception as e:
                 logging.error(f"Error analyzing {sym}: {e}")
-    
         time.sleep(CHECK_INTERVAL)
 
 @app.route('/')
