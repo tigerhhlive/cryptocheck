@@ -29,7 +29,6 @@ SIGNAL_COOLDOWN = 1800
 last_signals = {}
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-log_file = open("ai_signal_log.txt", "a")
 
 def send_telegram_message(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -80,11 +79,6 @@ def detect_engulfing(df):
     if prev['close'] > prev['open'] and curr['close'] < curr['open'] and curr['open'] > prev['close'] and curr['close'] < prev['open']:
         return 'bearish_engulfing'
     return None
-
-def detect_spike(df, multiplier=2.2):
-    avg_body = df.iloc[-20:-1].apply(lambda row: abs(row['close'] - row['open']), axis=1).mean()
-    last_body = abs(df.iloc[-1]['close'] - df.iloc[-1]['open'])
-    return last_body > avg_body * multiplier
 
 def check_cooldown(symbol, direction):
     key = f"{symbol}_{direction}"
@@ -137,11 +131,11 @@ def analyze_symbol(symbol, timeframe='15m'):
     reason = [] if direction else [k for k, v in conditions.items() if not v]
 
     if direction and not check_cooldown(symbol, direction):
-        log_file.write(f"{log_prefix} - DUPLICATE SIGNAL - Skipped due to cooldown\n")
+        logging.info(f"{log_prefix} - DUPLICATE SIGNAL - Skipped due to cooldown")
         return None, "Duplicate signal cooldown"
 
     if direction:
-        log_file.write(f"{log_prefix} - SIGNAL: {'BUY' if direction == 'Long' else 'SELL'} | Conditions Passed: {valid_conditions}/4\n")
+        logging.info(f"{log_prefix} - SIGNAL: {'BUY' if direction == 'Long' else 'SELL'} | Conditions Passed: {valid_conditions}/4")
         sl = entry - atr * ATR_MULTIPLIER_SL if direction == 'Long' else entry + atr * ATR_MULTIPLIER_SL
         tp1 = entry + atr * TP1_MULTIPLIER if direction == 'Long' else entry - atr * TP1_MULTIPLIER
         tp2 = entry + atr * TP2_MULTIPLIER if direction == 'Long' else entry - atr * TP2_MULTIPLIER
@@ -160,7 +154,7 @@ def analyze_symbol(symbol, timeframe='15m'):
 *Leverage (est.):* `{rr_ratio:.2f}X`"""
         return message, None
 
-    log_file.write(f"{log_prefix} - NO SIGNAL | Conditions Passed: {valid_conditions}/4 | Failed: {', '.join(reason)}\n")
+    logging.info(f"{log_prefix} - NO SIGNAL | Conditions Passed: {valid_conditions}/4 | Failed: {', '.join(reason)}")
     return None, None
 
 def analyze_symbol_mtf(symbol):
@@ -171,6 +165,7 @@ def analyze_symbol_mtf(symbol):
     return None, reason15 or reason5
 
 def monitor():
+    time.sleep(3)
     symbols = [
         "BTCUSDT", "ETHUSDT", "DOGEUSDT", "BNBUSDT", "XRPUSDT",
         "RENDERUSDT", "TRUMPUSDT", "FARTCOINUSDT", "XLMUSDT",
@@ -181,7 +176,7 @@ def monitor():
         now = datetime.utcnow()
         tehran_hour = (now.hour + 3) % 24
         if SLEEP_HOURS[0] <= tehran_hour < SLEEP_HOURS[1]:
-            logging.info("ربات در حالت خواب شبانه است")
+            logging.info("⏳ ربات در حالت خواب شبانه است")
             time.sleep(60)
             continue
 
@@ -189,13 +184,11 @@ def monitor():
             send_telegram_message("🤖 ربات فعال است و در حال بررسی سیگنال‌ها می‌باشد")
             last_heartbeat = time.time()
 
-        all_reasons = []
         for sym in symbols:
             try:
                 msg, reason = analyze_symbol_mtf(sym)
                 if msg:
                     send_telegram_message(msg)
-                
             except Exception as e:
                 logging.error(f"Error analyzing {sym}: {e}")
         time.sleep(CHECK_INTERVAL)
@@ -206,8 +199,11 @@ def home():
 
 @app.route('/testlog')
 def test_log():
-    msg, reason = analyze_symbol("BTCUSDT", "15m")
-    return msg or reason or "Nothing returned"
+    try:
+        msg, reason = analyze_symbol("BTCUSDT", "15m")
+        return f"<pre>{msg or reason or 'Nothing returned'}</pre>"
+    except Exception as e:
+        return f"<pre>❌ خطا: {str(e)}</pre>"
 
 if __name__ == '__main__':
     threading.Thread(target=monitor, daemon=True).start()
