@@ -45,6 +45,26 @@ def send_telegram_message(message):
     except Exception as e:
         logging.error(f"❌ Exception در ارسال پیام تلگرام: {e}")
 
+def get_data(timeframe, symbol):
+    url = "https://min-api.cryptocompare.com/data/v2/histominute"
+    aggregate = 5 if timeframe == '5m' else 15
+    limit = 60
+    fsym, tsym = symbol[:-4], "USDT"
+    params = {
+        'fsym': fsym,
+        'tsym': tsym,
+        'limit': limit,
+        'aggregate': aggregate,
+        'api_key': CRYPTOCOMPARE_API_KEY
+    }
+    res = requests.get(url, params=params, timeout=10)
+    data = res.json()['Data']['Data']
+    df = pd.DataFrame(data)
+    df['timestamp'] = pd.to_datetime(df['time'], unit='s')
+    df['volume'] = df['volumeto']
+    return df[['timestamp', 'open', 'high', 'low', 'close', 'volume']]
+
+
 def detect_volume_spike(df, multiplier=2.0):
     avg_volume = df['volume'].iloc[-21:-1].mean()
     return df['volume'].iloc[-1] > avg_volume * multiplier
