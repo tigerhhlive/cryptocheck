@@ -209,7 +209,6 @@ def test_log():
     msg, reason = analyze_symbol("BTCUSDT", "15m")
     return msg or reason or "Nothing returned"
 
-
 if __name__ == '__main__':
     threading.Thread(target=monitor, daemon=True).start()
     port = int(os.environ.get("PORT", 8080))
