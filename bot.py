@@ -206,9 +206,16 @@ def home():
 
 @app.route('/logs')
 def view_logs():
-    with open("ai_signal_log.txt", "r") as file:
-        content = file.read()
-    return f"<pre>{content}</pre>"
+    try:
+        with open("ai_signal_log.txt", "r") as file:
+            content = file.read()
+        if content:
+            return f"<pre>{content}</pre>"
+        else:
+            return "✅ فایل لاگ هنوز خالی است."
+    except Exception as e:
+        return f"❌ خطا در خواندن لاگ: {e}"
+
 
 if __name__ == '__main__':
     threading.Thread(target=monitor, daemon=True).start()
