@@ -204,6 +204,12 @@ def monitor():
 def home():
     return "I'm alive!"
 
+@app.route('/logs')
+def view_logs():
+    with open("ai_signal_log.txt", "r") as file:
+        content = file.read()
+    return f"<pre>{content}</pre>"
+
 if __name__ == '__main__':
     threading.Thread(target=monitor, daemon=True).start()
     port = int(os.environ.get("PORT", 8080))
