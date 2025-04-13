@@ -35,6 +35,16 @@ daily_hit_count = 0
 last_report_day = None
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+def send_telegram_message(message):
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
+    try:
+        response = requests.post(url, json=payload)
+        if response.status_code != 200:
+            logging.error(f"❌ خطا در ارسال پیام: {response.text}")
+    except Exception as e:
+        logging.error(f"❌ Exception در ارسال پیام تلگرام: {e}")
+
 def detect_volume_spike(df, multiplier=2.0):
     avg_volume = df['volume'].iloc[-21:-1].mean()
     return df['volume'].iloc[-1] > avg_volume * multiplier
