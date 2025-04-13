@@ -137,13 +137,13 @@ def analyze_symbol(symbol, timeframe='15m'):
     reason = [] if direction else [k for k, v in conditions.items() if not v]
 
     if direction and not check_cooldown(symbol, direction):
-        log_file.write(f"{log_prefix} - DUPLICATE SIGNAL - Skipped due to cooldown
-")")
+        log_file.write(f"{log_prefix} - DUPLICATE SIGNAL - Skipped due to cooldown\n")
+
         return None, "Duplicate signal cooldown"
 
     if direction:
-        log_file.write(f"{log_prefix} - SIGNAL: {'BUY' if direction == 'Long' else 'SELL'} | Conditions Passed: {valid_conditions}/4
-")")
+        log_file.write(f"{log_prefix} - SIGNAL: {'BUY' if direction == 'Long' else 'SELL'} | Conditions Passed: {valid_conditions}/4\n")
+
         sl = entry - atr * ATR_MULTIPLIER_SL if direction == 'Long' else entry + atr * ATR_MULTIPLIER_SL
         tp1 = entry + atr * TP1_MULTIPLIER if direction == 'Long' else entry - atr * TP1_MULTIPLIER
         tp2 = entry + atr * TP2_MULTIPLIER if direction == 'Long' else entry - atr * TP2_MULTIPLIER
@@ -162,8 +162,8 @@ def analyze_symbol(symbol, timeframe='15m'):
 *Leverage (est.):* `{rr_ratio:.2f}X`"""
         return message, None
 
-    log_file.write(f"{log_prefix} - NO SIGNAL | Conditions Passed: {valid_conditions}/4 | Failed: {', '.join(reason)}
-")")
+   log_file.write(f"{log_prefix} - NO SIGNAL | Conditions Passed: {valid_conditions}/4 | Failed: {', '.join(reason)}\n")
+
     return None, None
 
 def analyze_symbol_mtf(symbol):
