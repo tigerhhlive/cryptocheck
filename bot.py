@@ -138,12 +138,12 @@ def analyze_symbol(symbol, timeframe='15m'):
 
     if direction and not check_cooldown(symbol, direction):
         log_file.write(f"{log_prefix} - DUPLICATE SIGNAL - Skipped due to cooldown
-")
+")")
         return None, "Duplicate signal cooldown"
 
     if direction:
         log_file.write(f"{log_prefix} - SIGNAL: {'BUY' if direction == 'Long' else 'SELL'} | Conditions Passed: {valid_conditions}/4
-")
+")")
         sl = entry - atr * ATR_MULTIPLIER_SL if direction == 'Long' else entry + atr * ATR_MULTIPLIER_SL
         tp1 = entry + atr * TP1_MULTIPLIER if direction == 'Long' else entry - atr * TP1_MULTIPLIER
         tp2 = entry + atr * TP2_MULTIPLIER if direction == 'Long' else entry - atr * TP2_MULTIPLIER
@@ -163,7 +163,7 @@ def analyze_symbol(symbol, timeframe='15m'):
         return message, None
 
     log_file.write(f"{log_prefix} - NO SIGNAL | Conditions Passed: {valid_conditions}/4 | Failed: {', '.join(reason)}
-")
+")")
     return None, None
 
 def analyze_symbol_mtf(symbol):
