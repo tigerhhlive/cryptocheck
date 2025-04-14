@@ -61,20 +61,13 @@ def get_data(timeframe, symbol):
         'api_key': CRYPTOCOMPARE_API_KEY
     }
     try:
-        # Log raw response for debugging
         res = requests.get(url, params=params, timeout=10)
         json_data = res.json()
-        logging.info(f"Raw response for {symbol}: {json_data}")  # Add detailed log
-
         data = json_data.get("Data", {}).get("Data", [])
         if not data or not isinstance(data, list):
             logging.warning(f"⚠️ No valid data received for {symbol} in {timeframe}. Raw: {json_data}")
             return None
         df = pd.DataFrame(data)
-        
-        # Log data length and preview
-        logging.info(f"Received {len(df)} rows of data for {symbol} in {timeframe}. Preview:\n{df.head()}")
-        
         if df.empty or df.isnull().all().any():
             logging.warning(f"⚠️ DataFrame is empty or all null for {symbol} in {timeframe}")
             return None
@@ -186,7 +179,6 @@ def analyze_symbol(symbol, timeframe='15m', fast_check=False):
         df = get_data(timeframe, symbol)
 
     if len(df) < 15:
-        logging.warning(f"⚠️ Invalid or no {timeframe} data for {symbol}. Data length: {len(df)}")
         return None, "Data too short"
 
     df['EMA20'] = ta.ema(df['close'], length=20)
@@ -194,7 +186,6 @@ def analyze_symbol(symbol, timeframe='15m', fast_check=False):
     df['rsi'] = ta.rsi(df['close'], length=14)
     macd = ta.macd(df['close'])
     if macd is None or not isinstance(macd, pd.DataFrame) or macd.isnull().all().all():
-        logging.warning(f"⚠️ MACD calculation failed for {symbol} in {timeframe}. Raw: {macd}")
         return None, "MACD calculation failed"
 
     df['MACD'] = macd['MACD_12_26_9']
@@ -202,16 +193,13 @@ def analyze_symbol(symbol, timeframe='15m', fast_check=False):
 
     adx = ta.adx(df['high'], df['low'], df['close'])
     if adx is None or not isinstance(adx, pd.DataFrame):
-        logging.warning(f"⚠️ ADX calculation failed for {symbol} in {timeframe}. Raw: {adx}")
         return None, "ADX calculation failed"
     if 'ADX_14' not in adx.columns or adx['ADX_14'].isnull().any():
-        logging.warning(f"⚠️ ADX_14 column is missing or contains null values for {symbol}")
         return None, "ADX_14 column is missing or contains null values"
     df['ADX'] = adx['ADX_14']
 
     atr_series = ta.atr(df['high'], df['low'], df['close'])
     if atr_series is None or atr_series.isnull().all():
-        logging.warning(f"⚠️ ATR calculation failed for {symbol} in {timeframe}")
         return None, "ATR calculation failed"
     df['ATR'] = atr_series
 
