@@ -172,7 +172,7 @@ if fast_check:
         df = get_data(timeframe, symbol)
 if fast_check:
     df = get_data(timeframe, symbol).tail(15)
-else:
+    else:
     df = get_data(timeframe, symbol)
 
  if df is None:
