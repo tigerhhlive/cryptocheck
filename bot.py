@@ -166,20 +166,16 @@ def check_cooldown(symbol, direction):
 def analyze_symbol(symbol, timeframe='15m', fast_check=False):
     global daily_signal_count
 
-if fast_check:
+    if fast_check:
         df = get_data(timeframe, symbol).tail(15)
     else:
         df = get_data(timeframe, symbol)
-if fast_check:
-    df = get_data(timeframe, symbol).tail(15)
-    else:
-    df = get_data(timeframe, symbol)
 
- if df is None:
-    logging.warning(f"⚠️ Invalid or no {timeframe} data for {symbol}")
-    return None, "No data"
-    
- if len(df) < 15:
+    if df is None:
+        logging.warning(f"⚠️ Invalid or no {timeframe} data for {symbol}")
+        return None, "No data"
+
+    if len(df) < 15:
         return None, "Data too short"
 
     df['EMA20'] = ta.ema(df['close'], length=20)
