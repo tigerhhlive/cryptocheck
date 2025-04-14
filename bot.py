@@ -327,7 +327,7 @@ def analyze_symbol_mtf(symbol):
         return None, None
 
     except Exception as e:
-        logging.error(f\"❌ Error analyzing {symbol} (MTF): {e}\")
+        logging.error(f"❌ Error analyzing {symbol} (MTF): {e}")
         return None, None
 
     except Exception as e:
