@@ -208,13 +208,13 @@ above_ema = candle['close'] > candle['EMA20'] and candle['EMA20'] > candle['EMA5
 below_ema = candle['close'] < candle['EMA20'] and candle['EMA20'] < candle['EMA50']
 
 confirmations = []
-    if (signal_type and 'bullish' in signal_type and rsi_val >= 50) or (signal_type and 'bearish' in signal_type and rsi_val <= 50):
+if (signal_type and 'bullish' in signal_type and rsi_val >= 50) or (signal_type and 'bearish' in signal_type and rsi_val <= 50):
         confirmations.append("RSI")
-    if (df['MACD'].iloc[-2] > df['MACDs'].iloc[-2]) if 'bullish' in str(signal_type) else (df['MACD'].iloc[-2] < df['MACDs'].iloc[-2]):
+if (df['MACD'].iloc[-2] > df['MACDs'].iloc[-2]) if 'bullish' in str(signal_type) else (df['MACD'].iloc[-2] < df['MACDs'].iloc[-2]):
         confirmations.append("MACD")
-    if adx_val > ADX_THRESHOLD:
+if adx_val > ADX_THRESHOLD:
         confirmations.append("ADX")
-    if ('bullish' in str(signal_type) and above_ema) or ('bearish' in str(signal_type) and below_ema):
+if ('bullish' in str(signal_type) and above_ema) or ('bearish' in str(signal_type) and below_ema):
         confirmations.append("EMA")
 
 confidence = len(confirmations)
