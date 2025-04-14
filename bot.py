@@ -171,7 +171,7 @@ def analyze_symbol(symbol, timeframe='15m', fast_check=False):
         df = get_data(timeframe, symbol)
 
     if len(df) < 15:
-        return None, None
+        return None, "Data too short"
 
     df['EMA20'] = ta.ema(df['close'], length=20)
     df['EMA50'] = ta.ema(df['close'], length=50)
@@ -240,16 +240,14 @@ def analyze_symbol(symbol, timeframe='15m', fast_check=False):
     if direction is None and is_near_support and candle['close'] > candle['open']:
         alert_msg = f"""🟡 *Watch for Reversal*
 Symbol: `{symbol}`
-Price is in support zone with bullish candle.
-Could be early reversal – keep an eye on it."""
-        return alert_msg, "Candle Only"
+Price is in support zone with bullish candle."""
+        return None, "Candle Only"
 
     if direction is None and is_near_resistance and candle['close'] < candle['open']:
         alert_msg = f"""🟡 *Watch for Drop*
 Symbol: `{symbol}`
-Price is in resistance zone with bearish candle.
-Could be early rejection – monitor closely."""
-        return alert_msg, "Candle Only"
+Price is in resistance zone with bearish candle."""
+        return None, "Candle Only"
 
     if direction and not check_cooldown(symbol, direction):
         logging.info(f"{symbol} - DUPLICATE SIGNAL - Skipped due to cooldown")
@@ -260,37 +258,27 @@ Could be early rejection – monitor closely."""
 
         resistance = df['high'].rolling(window=10).max().iloc[-2]
         support = df['low'].rolling(window=10).min().iloc[-2]
+        sl = tp1 = tp2 = None
 
-    sl = tp1 = tp2 = None
+        if direction == 'Long':
+            sl = entry - atr * ATR_MULTIPLIER_SL
+            tp1 = min(entry + atr * TP1_MULTIPLIER, resistance)
+            tp2 = tp1 + (tp1 - entry) * 1.2
+        elif direction == 'Short':
+            sl = entry + atr * ATR_MULTIPLIER_SL
+            tp1 = max(entry - atr * TP1_MULTIPLIER, support)
+            tp2 = tp1 - (entry - tp1) * 1.2
+        else:
+            return None, "Invalid direction"
 
-    if direction == 'Long':
-        if pd.isna(resistance):
-            return None, "Missing resistance value"
-        sl = entry - atr * ATR_MULTIPLIER_SL
-        tp1 = min(entry + atr * TP1_MULTIPLIER, resistance)
-        tp2 = tp1 + (tp1 - entry) * 1.2
+        rr_ratio = abs(tp1 - entry) / abs(entry - sl)
+        confidence_stars = "🔥" * confidence
 
-    elif direction == 'Short':
-        if pd.isna(support):
-            return None, "Missing support value"
-        sl = entry + atr * ATR_MULTIPLIER_SL
-        tp1 = max(entry - atr * TP1_MULTIPLIER, support)
-        tp2 = tp1 - (entry - tp1) * 1.2
-
-    else:
-        return None, "Invalid direction"
-
-    if None in (tp1, tp2, sl):
-        return None, "TP or SL not set properly"
-
-    rr_ratio = abs(tp1 - entry) / abs(entry - sl)
-    confidence_stars = "🔥" * confidence
-
-    message = f"""🚨 *AI Signal Alert*
+        message = f"""🚨 *AI Signal Alert*
 *Symbol:* `{symbol}`
 *Signal:* {'🟢 BUY MARKET' if direction == 'Long' else '🔴 SELL MARKET'}
 *Pattern:* {pattern}
-*Confirmed by:* {", ".join(confirmations) if confirmations else 'None'}
+*Confirmed by:* {', '.join(confirmations) if confirmations else 'None'}
 *Entry:* `{entry:.6f}`
 *Stop Loss:* `{sl:.6f}`
 *Target 1:* `{tp1:.6f}`
@@ -298,15 +286,20 @@ Could be early rejection – monitor closely."""
 *Leverage (est.):* `{rr_ratio:.2f}X`
 *Signal Strength:* {confidence_stars}"""
 
-    open_positions[symbol] = {
-        'direction': direction,
-        'sl': sl,
-        'tp1': tp1,
-        'tp2': tp2
-    }
+        return {
+            "symbol": symbol,
+            "direction": direction,
+            "entry": entry,
+            "sl": sl,
+            "tp1": tp1,
+            "tp2": tp2,
+            "confidence": confidence,
+            "pattern": pattern,
+            "confirmations": confirmations,
+            "message": message
+        }, None
 
-    return message, None
-
+    return None, None
 
 
     if not fast_check:
@@ -314,13 +307,18 @@ Could be early rejection – monitor closely."""
     return None, None
 
 def analyze_symbol_mtf(symbol):
-    msg_5m, _ = analyze_symbol(symbol, '5m')
-    msg_15m, _ = analyze_symbol(symbol, '15m')
-    if msg_5m and msg_15m:
-        if ("BUY" in msg_5m and "BUY" in msg_15m) or ("SELL" in msg_5m and "SELL" in msg_15m):
-            return msg_15m, None
-    elif msg_15m and ("🔥🔥🔥" in msg_15m):
-        return msg_15m + "\n⚠️ *Strong 15m signal without 5m confirmation.*", None
+    tf5_data, _ = analyze_symbol(symbol, '5m', fast_check=True)
+    tf15_data, _ = analyze_symbol(symbol, '15m')
+
+    if not tf15_data:
+        return None, None
+
+    if tf5_data and tf5_data['direction'] == tf15_data['direction']:
+        if tf15_data['confidence'] >= 3 and tf5_data['confidence'] >= 2:
+            return tf15_data['message'], None
+    elif tf15_data['confidence'] >= 4:
+        return tf15_data['message'] + "\n⚠️ Strong 15m signal without 5m confirmation.", None
+
     return None, None
 
 def analyze_and_alert(sym):
