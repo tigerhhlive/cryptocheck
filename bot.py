@@ -345,9 +345,12 @@ def analyze_symbol_mtf(symbol):
 
         return None, None
 
-    except Exception as e:
-        logging.error(f"❌ Error analyzing {symbol} (MTF): {type(e).__name__} - {e}")
-        return None, None
+        except Exception as e:
+            import traceback
+            tb = traceback.format_exc()
+            logging.error(f"❌ Error analyzing {symbol} (MTF): {type(e).__name__} - {e}\nTraceback:\n{tb}")
+            return None, None
+
 
 def analyze_and_alert(sym):
     try:
