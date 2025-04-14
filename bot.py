@@ -256,12 +256,12 @@ Could be early rejection – monitor closely."""
         return None, "Duplicate"
 
     if direction:
-    daily_signal_count += 1
+        daily_signal_count += 1
 
-    resistance = df['high'].rolling(window=10).max().iloc[-2]
-    support = df['low'].rolling(window=10).min().iloc[-2]
+        resistance = df['high'].rolling(window=10).max().iloc[-2]
+        support = df['low'].rolling(window=10).min().iloc[-2]
 
-    sl = tp1 = tp2 = None  # تعریف اولیه برای جلوگیری از خطا
+        sl = tp1 = tp2 = None  # تعریف اولیه برای جلوگیری از خطا
 
     if direction == 'Long':
         if resistance is None or pd.isna(resistance):
