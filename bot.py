@@ -256,19 +256,29 @@ Could be early rejection – monitor closely."""
         return None, "Duplicate"
 
     if direction:
-        daily_signal_count += 1
+    daily_signal_count += 1
 
-        resistance = df['high'].rolling(window=10).max().iloc[-2]
-        support = df['low'].rolling(window=10).min().iloc[-2]
+    resistance = df['high'].rolling(window=10).max().iloc[-2]
+    support = df['low'].rolling(window=10).min().iloc[-2]
 
-        if direction == 'Long':
-            sl = entry - atr * ATR_MULTIPLIER_SL
-            tp1 = min(entry + atr * TP1_MULTIPLIER, resistance)
-            tp2 = tp1 + (tp1 - entry) * 1.2
-        else:
-            sl = entry + atr * ATR_MULTIPLIER_SL
-            tp1 = max(entry - atr * TP1_MULTIPLIER, support)
-            tp2 = tp1 - (entry - tp1) * 1.2
+    sl = tp1 = tp2 = None  # تعریف اولیه برای جلوگیری از خطا
+
+    if direction == 'Long':
+        if resistance is None or pd.isna(resistance):
+            return None, "Missing resistance value"
+        sl = entry - atr * ATR_MULTIPLIER_SL
+        tp1 = min(entry + atr * TP1_MULTIPLIER, resistance)
+        tp2 = tp1 + (tp1 - entry) * 1.2
+
+    elif direction == 'Short':
+        if support is None or pd.isna(support):
+            return None, "Missing support value"
+        sl = entry + atr * ATR_MULTIPLIER_SL
+        tp1 = max(entry - atr * TP1_MULTIPLIER, support)
+        tp2 = tp1 - (entry - tp1) * 1.2
+
+    if None in (tp1, tp2, sl):
+        return None, "TP or SL not set properly"
 
     rr_ratio = abs(tp1 - entry) / abs(entry - sl)
     confidence_stars = "🔥" * confidence
@@ -293,6 +303,7 @@ Could be early rejection – monitor closely."""
     }
 
     return message, None
+
 
     if not fast_check:
         logging.info(f"{symbol} - NO SIGNAL | Confirmations: {len(confirmations)}/4")
