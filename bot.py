@@ -48,6 +48,7 @@ def send_telegram_message(message):
     except Exception as e:
         logging.error(f"Telegram exception: {e}")
 
+
 def get_data(timeframe, symbol):
     url = "https://min-api.cryptocompare.com/data/v2/histominute"
     aggregate = 5 if timeframe == '5m' else 15
@@ -60,17 +61,35 @@ def get_data(timeframe, symbol):
         'aggregate': aggregate,
         'api_key': CRYPTOCOMPARE_API_KEY
     }
-    res = requests.get(url, params=params, timeout=10)
-    data = res.json()['Data']['Data']
-    df = pd.DataFrame(data)
-    
-    if df.empty or df.isnull().all().any():
-        return None
-        
-    df['timestamp'] = pd.to_datetime(df['time'], unit='s')
-    df['volume'] = df['volumeto']
-    return df[['timestamp', 'open', 'high', 'low', 'close', 'volume']]
 
+    try:
+        res = requests.get(url, params=params, timeout=10)
+        raw = res.json()
+        logging.info(f"✅ RAW RESPONSE FOR {symbol}: {raw}")
+        data = raw['Data']['Data']
+        df = pd.DataFrame(data)
+
+        if df.empty or df.isnull().all().any():
+            logging.warning(f"⚠️ EMPTY OR NULL DATAFRAME for {symbol} in {timeframe} - RETRYING...")
+            time.sleep(1)
+            res = requests.get(url, params=params, timeout=10)
+            raw = res.json()
+            data = raw['Data']['Data']
+            df = pd.DataFrame(data)
+
+        if df.empty:
+            logging.warning(f"⚠️ EMPTY DATAFRAME for {symbol} in {timeframe}")
+            return None
+        if df.isnull().all().any():
+            logging.warning(f"⚠️ NULL DATAFRAME for {symbol} in {timeframe}")
+            return None
+
+        df['timestamp'] = pd.to_datetime(df['time'], unit='s')
+        df['volume'] = df['volumeto']
+        return df[['timestamp', 'open', 'high', 'low', 'close', 'volume']]
+    except Exception as e:
+        logging.error(f"❌ Exception in get_data for {symbol}: {e}")
+        return None
 def monitor_positions():
     global tp1_count, tp2_count, sl_count, last_report_day, daily_signal_count, daily_hit_count
     while True:
@@ -171,10 +190,6 @@ def analyze_symbol(symbol, timeframe='15m', fast_check=False):
     else:
         df = get_data(timeframe, symbol)
 
-    if df is None:
-        logging.warning(f"⚠️ Invalid or no {timeframe} data for {symbol}")
-        return None, "No data"
-
     if len(df) < 15:
         return None, "Data too short"
 
@@ -191,10 +206,7 @@ def analyze_symbol(symbol, timeframe='15m', fast_check=False):
     adx = ta.adx(df['high'], df['low'], df['close'])
     if adx is None or not isinstance(adx, pd.DataFrame):
         return None, "ADX calculation failed"
-    df['ADX'] = adx['ADX_14']
-    df['DI+'] = adx['DMP_14']
-    df['DI-'] = adx['DMN_14']
-
+    df['ADX'] = adx['ADX']
 
     atr_series = ta.atr(df['high'], df['low'], df['close'])
     if atr_series is None or atr_series.isnull().all():
