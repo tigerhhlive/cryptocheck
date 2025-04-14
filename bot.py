@@ -170,6 +170,7 @@ def check_cooldown(symbol, direction):
         return False
     last_signals[key] = now
     return True
+# نسخه بهبود یافته فانکشن analyze_symbol با تشخیص نواحی حمایت/مقاومت، کندل تأییدیه و Break of Structure (BoS)
 
 def analyze_symbol(symbol, timeframe='15m'):
     global daily_signal_count
@@ -191,6 +192,7 @@ def analyze_symbol(symbol, timeframe='15m'):
     df['ATR'] = ta.atr(df['high'], df['low'], df['close'])
 
     candle = df.iloc[-2]
+    confirm_candle = df.iloc[-1]
     signal_type = detect_strong_candle(candle) or detect_engulfing(df[:-1])
     pattern = signal_type.replace("_", " ").title() if signal_type else "None"
 
@@ -216,6 +218,34 @@ def analyze_symbol(symbol, timeframe='15m'):
     confidence = len(confirmations)
     direction = 'Long' if 'bullish' in str(signal_type) and confidence >= 3 else 'Short' if 'bearish' in str(signal_type) and confidence >= 3 else None
 
+    # کندل تأییدیه
+    if direction == 'Long' and confirm_candle['close'] <= confirm_candle['open']:
+        return None, "Confirmation candle failed"
+    if direction == 'Short' and confirm_candle['close'] >= confirm_candle['open']:
+        return None, "Confirmation candle failed"
+
+    # نواحی حمایت/مقاومت
+    support_zone = df['low'].rolling(window=10).min().iloc[-1]
+    resistance_zone = df['high'].rolling(window=10).max().iloc[-1]
+    is_near_support = entry <= support_zone * 1.02
+    is_near_resistance = entry >= resistance_zone * 0.98
+
+    if direction == 'Long' and is_near_resistance:
+        return None, "Too close to resistance"
+    if direction == 'Short' and is_near_support:
+        return None, "Too close to support"
+
+    # Break of Structure تشخیص
+    prev_high = df['high'].iloc[-5:-2].max()
+    prev_low = df['low'].iloc[-5:-2].min()
+    bos_long = direction == 'Long' and candle['high'] > prev_high
+    bos_short = direction == 'Short' and candle['low'] < prev_low
+
+    if direction == 'Long' and not bos_long:
+        return None, "No bullish structure break"
+    if direction == 'Short' and not bos_short:
+        return None, "No bearish structure break"
+
     if direction and not check_cooldown(symbol, direction):
         logging.info(f"{symbol} - DUPLICATE SIGNAL - Skipped due to cooldown")
         return None, "Duplicate"
@@ -233,7 +263,8 @@ def analyze_symbol(symbol, timeframe='15m'):
 
         confidence_stars = "🔥" * confidence
 
-        message = f"""🚨 *AI Signal Alert*
+        message = f"""\
+🚨 *AI Signal Alert*
 *Symbol:* `{symbol}`
 *Signal:* {'🟢 BUY MARKET' if direction == 'Long' else '🔴 SELL MARKET'}
 *Pattern:* {pattern}
@@ -273,7 +304,7 @@ def monitor():
     symbols = [
         "BTCUSDT", "ETHUSDT", "DOGEUSDT", "BNBUSDT", "XRPUSDT",
         "RENDERUSDT", "TRUMPUSDT", "FARTCOINUSDT", "XLMUSDT",
-        "SHIBUSDT", "ADAUSDT", "NOTUSDT", "PROMUSDT"
+        "SHIBUSDT", "ADAUSDT", "NOTUSDT", "PROMUSDT", "PENDLEUSDT"
     ]
     last_heartbeat = 0
 
