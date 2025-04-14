@@ -207,7 +207,7 @@ atr = max(atr, entry * MIN_PERCENT_RISK, MIN_ATR)
 above_ema = candle['close'] > candle['EMA20'] and candle['EMA20'] > candle['EMA50']
 below_ema = candle['close'] < candle['EMA20'] and candle['EMA20'] < candle['EMA50']
 
-    confirmations = []
+confirmations = []
     if (signal_type and 'bullish' in signal_type and rsi_val >= 50) or (signal_type and 'bearish' in signal_type and rsi_val <= 50):
         confirmations.append("RSI")
     if (df['MACD'].iloc[-2] > df['MACDs'].iloc[-2]) if 'bullish' in str(signal_type) else (df['MACD'].iloc[-2] < df['MACDs'].iloc[-2]):
@@ -217,8 +217,8 @@ below_ema = candle['close'] < candle['EMA20'] and candle['EMA20'] < candle['EMA5
     if ('bullish' in str(signal_type) and above_ema) or ('bearish' in str(signal_type) and below_ema):
         confirmations.append("EMA")
 
-    confidence = len(confirmations)
-    direction = 'Long' if 'bullish' in str(signal_type) and confidence >= 3 else 'Short' if 'bearish' in str(signal_type) and confidence >= 3 else None
+confidence = len(confirmations)
+direction = 'Long' if 'bullish' in str(signal_type) and confidence >= 3 else 'Short' if 'bearish' in str(signal_type) and confidence >= 3 else None
 
     if direction == 'Long' and confirm_candle['close'] <= confirm_candle['open']:
         return None, "Confirmation candle failed"
