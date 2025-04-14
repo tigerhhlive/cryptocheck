@@ -256,10 +256,10 @@ Could be early rejection – monitor closely."""
         return None, "Duplicate"
 
     if direction:
-        daily_signal_count += 1
+    daily_signal_count += 1
 
-        resistance = df['high'].rolling(window=10).max().iloc[-2]
-        support = df['low'].rolling(window=10).min().iloc[-2]
+    resistance = df['high'].rolling(window=10).max().iloc[-2]
+    support = df['low'].rolling(window=10).min().iloc[-2]
 
     if direction == 'Long':
         sl = entry - atr * ATR_MULTIPLIER_SL
@@ -273,8 +273,7 @@ Could be early rejection – monitor closely."""
     rr_ratio = abs(tp1 - entry) / abs(entry - sl)
     confidence_stars = "🔥" * confidence
 
-
-        message = f"""🚨 *AI Signal Alert*
+    message = f"""🚨 *AI Signal Alert*
 *Symbol:* `{symbol}`
 *Signal:* {'🟢 BUY MARKET' if direction == 'Long' else '🔴 SELL MARKET'}
 *Pattern:* {pattern}
@@ -286,14 +285,14 @@ Could be early rejection – monitor closely."""
 *Leverage (est.):* `{rr_ratio:.2f}X`
 *Signal Strength:* {confidence_stars}"""
 
-        open_positions[symbol] = {
-            'direction': direction,
-            'sl': sl,
-            'tp1': tp1,
-            'tp2': tp2
-        }
+    open_positions[symbol] = {
+        'direction': direction,
+        'sl': sl,
+        'tp1': tp1,
+        'tp2': tp2
+    }
 
-        return message, None
+    return message, None
 
     if not fast_check:
         logging.info(f"{symbol} - NO SIGNAL | Confirmations: {len(confirmations)}/4")
