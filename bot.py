@@ -310,13 +310,15 @@ def analyze_symbol_mtf(symbol):
     tf5_data, _ = analyze_symbol(symbol, '5m', fast_check=True)
     tf15_data, _ = analyze_symbol(symbol, '15m')
 
-    if not tf15_data:
+    if not tf15_data or not isinstance(tf15_data, dict):
         return None, None
 
-    if tf5_data and tf5_data['direction'] == tf15_data['direction']:
-        if tf15_data['confidence'] >= 3 and tf5_data['confidence'] >= 2:
-            return tf15_data['message'], None
-    elif tf15_data['confidence'] >= 4:
+    if tf5_data and isinstance(tf5_data, dict):
+        if tf5_data['direction'] == tf15_data['direction']:
+            if tf15_data['confidence'] >= 3 and tf5_data['confidence'] >= 2:
+                return tf15_data['message'], None
+
+    if tf15_data['confidence'] >= 4:
         return tf15_data['message'] + "\n⚠️ Strong 15m signal without 5m confirmation.", None
 
     return None, None
