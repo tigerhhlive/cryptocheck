@@ -101,11 +101,9 @@ def monitor_positions():
                         send_telegram_message(f"❌ *{symbol} SL Hit* - Position Closed.")
                         sl_count += 1
                         del open_positions[symbol]
-
             except Exception as e:
                 logging.error(f"Monitor error for {symbol}: {e}")
 
-        # پایان روز قبل خواب
         now = datetime.utcnow()
         tehran_hour = (now.hour + 3) % 24
         tehran_min = now.minute
@@ -130,6 +128,18 @@ Total Signals: {total}
             send_telegram_message("😴 Bot going to sleep. See you tomorrow!")
 
         time.sleep(MONITOR_INTERVAL)
+
+def analyze_symbol_mtf(symbol):
+    msg_5m, _ = analyze_symbol(symbol, '5m')
+    msg_15m, _ = analyze_symbol(symbol, '15m')
+    if msg_5m and msg_15m:
+        if ("BUY" in msg_5m and "BUY" in msg_15m) or ("SELL" in msg_5m and "SELL" in msg_15m):
+            return msg_15m, None
+    elif msg_15m:
+        confirmations_count = msg_15m.count("🔥")
+        if confirmations_count >= 3:
+            return msg_15m + "\n⚠️ *Strong 15m signal without 5m confirmation.*", None
+    return None, None
 
 def detect_strong_candle(row, threshold=0.7):
     body = abs(row['close'] - row['open'])
