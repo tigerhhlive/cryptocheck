@@ -256,17 +256,23 @@ Could be early rejection – monitor closely."""
         return None, "Duplicate"
 
     if direction:
-        daily_signal_count += 1
-        sl = entry - atr * ATR_MULTIPLIER_SL if direction == 'Long' else entry + atr * ATR_MULTIPLIER_SL
-        tp1 = entry + atr * TP1_MULTIPLIER if direction == 'Long' else entry - atr * TP1_MULTIPLIER
-        tp2 = entry + atr * TP2_MULTIPLIER if direction == 'Long' else entry - atr * TP2_MULTIPLIER
-        rr_ratio = abs(tp1 - entry) / abs(entry - sl)
-        TP1_MULT = max(1.5, round(rr_ratio * 1.1, 1))
-        TP2_MULT = round(TP1_MULT * 1.5, 1)
-        tp1 = entry + atr * TP1_MULT if direction == 'Long' else entry - atr * TP1_MULT
-        tp2 = entry + atr * TP2_MULT if direction == 'Long' else entry - atr * TP2_MULT
+    daily_signal_count += 1
 
-        confidence_stars = "🔥" * confidence
+    resistance = df['high'].rolling(window=10).max().iloc[-2]
+    support = df['low'].rolling(window=10).min().iloc[-2]
+
+    if direction == 'Long':
+        sl = entry - atr * ATR_MULTIPLIER_SL
+        tp1 = min(entry + atr * TP1_MULTIPLIER, resistance)
+        tp2 = tp1 + (tp1 - entry) * 1.2
+    else:
+        sl = entry + atr * ATR_MULTIPLIER_SL
+        tp1 = max(entry - atr * TP1_MULTIPLIER, support)
+        tp2 = tp1 - (entry - tp1) * 1.2
+
+    rr_ratio = abs(tp1 - entry) / abs(entry - sl)
+    confidence_stars = "🔥" * confidence
+
 
         message = f"""🚨 *AI Signal Alert*
 *Symbol:* `{symbol}`
