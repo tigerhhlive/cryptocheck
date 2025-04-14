@@ -308,34 +308,36 @@ Price is in resistance zone with bearish candle."""
     
 def analyze_symbol_mtf(symbol):
     try:
+        # اجرای هر دو تایم‌فریم
         tf5_result = analyze_symbol(symbol, '5m', fast_check=True)
         tf15_result = analyze_symbol(symbol, '15m')
 
-        # بررسی دقیق نتیجه تحلیل تایم‌فریم 5m
         tf5_data = None
-        if tf5_result is not None and isinstance(tf5_result, tuple):
-            data5, _ = tf5_result
-            if isinstance(data5, dict):
-                tf5_data = data5
-
-        # بررسی دقیق نتیجه تحلیل تایم‌فریم 15m
         tf15_data = None
-        if tf15_result is not None and isinstance(tf15_result, tuple):
-            data15, _ = tf15_result
-            if isinstance(data15, dict):
-                tf15_data = data15
 
-        # اگر 15m داده معتبر نداد، سیگنالی نیست
+        # بررسی دقیق tf5_result
+        if tf5_result and isinstance(tf5_result, tuple):
+            part = tf5_result[0]
+            if part and isinstance(part, dict):
+                tf5_data = part
+
+        # بررسی دقیق tf15_result
+        if tf15_result and isinstance(tf15_result, tuple):
+            part = tf15_result[0]
+            if part and isinstance(part, dict):
+                tf15_data = part
+
+        # اگر tf15_data معتبر نیست، ادامه نمی‌دیم
         if not tf15_data:
-            logging.warning(f"⚠️ Skipping {symbol} - no valid 15m data.")
+            logging.warning(f"⚠️ No 15m data for {symbol}")
             return None, None
 
-        # استخراج امن فیلدها
-        dir_15 = tf15_data.get("direction", None)
+        # استخراج مقادیر با خیال راحت
+        dir_15 = tf15_data.get("direction")
         conf_15 = tf15_data.get("confidence", 0)
         msg_15 = tf15_data.get("message", "")
 
-        dir_5 = tf5_data.get("direction", None) if tf5_data else None
+        dir_5 = tf5_data.get("direction") if tf5_data else None
         conf_5 = tf5_data.get("confidence", 0) if tf5_data else 0
 
         if dir_15 == dir_5 and conf_15 >= 3 and conf_5 >= 2:
