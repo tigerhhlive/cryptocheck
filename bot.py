@@ -48,7 +48,6 @@ def send_telegram_message(message):
     except Exception as e:
         logging.error(f"Telegram exception: {e}")
 
-
 def get_data(timeframe, symbol):
     url = "https://min-api.cryptocompare.com/data/v2/histominute"
     aggregate = 5 if timeframe == '5m' else 15
@@ -61,35 +60,24 @@ def get_data(timeframe, symbol):
         'aggregate': aggregate,
         'api_key': CRYPTOCOMPARE_API_KEY
     }
-
     try:
         res = requests.get(url, params=params, timeout=10)
-        raw = res.json()
-        logging.info(f"✅ RAW RESPONSE FOR {symbol}: {raw}")
-        data = raw['Data']['Data']
+        json_data = res.json()
+        data = json_data.get("Data", {}).get("Data", [])
+        if not data or not isinstance(data, list):
+            logging.warning(f"⚠️ No valid data received for {symbol} in {timeframe}. Raw: {json_data}")
+            return None
         df = pd.DataFrame(data)
-
         if df.empty or df.isnull().all().any():
-            logging.warning(f"⚠️ EMPTY OR NULL DATAFRAME for {symbol} in {timeframe} - RETRYING...")
-            time.sleep(1)
-            res = requests.get(url, params=params, timeout=10)
-            raw = res.json()
-            data = raw['Data']['Data']
-            df = pd.DataFrame(data)
-
-        if df.empty:
-            logging.warning(f"⚠️ EMPTY DATAFRAME for {symbol} in {timeframe}")
+            logging.warning(f"⚠️ DataFrame is empty or all null for {symbol} in {timeframe}")
             return None
-        if df.isnull().all().any():
-            logging.warning(f"⚠️ NULL DATAFRAME for {symbol} in {timeframe}")
-            return None
-
         df['timestamp'] = pd.to_datetime(df['time'], unit='s')
         df['volume'] = df['volumeto']
         return df[['timestamp', 'open', 'high', 'low', 'close', 'volume']]
     except Exception as e:
-        logging.error(f"❌ Exception in get_data for {symbol}: {e}")
+        logging.error(f"❌ Error fetching data for {symbol}: {e}")
         return None
+
 def monitor_positions():
     global tp1_count, tp2_count, sl_count, last_report_day, daily_signal_count, daily_hit_count
     while True:
