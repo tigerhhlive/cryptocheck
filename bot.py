@@ -204,8 +204,8 @@ entry = df['close'].iloc[-2]
 atr = df['ATR'].iloc[-2]
 atr = max(atr, entry * MIN_PERCENT_RISK, MIN_ATR)
 
-    above_ema = candle['close'] > candle['EMA20'] and candle['EMA20'] > candle['EMA50']
-    below_ema = candle['close'] < candle['EMA20'] and candle['EMA20'] < candle['EMA50']
+above_ema = candle['close'] > candle['EMA20'] and candle['EMA20'] > candle['EMA50']
+below_ema = candle['close'] < candle['EMA20'] and candle['EMA20'] < candle['EMA50']
 
     confirmations = []
     if (signal_type and 'bullish' in signal_type and rsi_val >= 50) or (signal_type and 'bearish' in signal_type and rsi_val <= 50):
