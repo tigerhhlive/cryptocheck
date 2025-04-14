@@ -191,10 +191,12 @@ def analyze_symbol(symbol, timeframe='15m', fast_check=False):
     df['MACD'] = macd['MACD_12_26_9']
     df['MACDs'] = macd['MACDs_12_26_9']
 
-    adx = ta.adx(df['high'], df['low'], df['close'])
+     adx = ta.adx(df['high'], df['low'], df['close'])
     if adx is None or not isinstance(adx, pd.DataFrame):
         return None, "ADX calculation failed"
-    df['ADX'] = adx['ADX']
+    if 'ADX_14' not in adx.columns or adx['ADX_14'].isnull().any():
+        return None, "ADX_14 column is missing or contains null values"
+    df['ADX'] = adx['ADX_14']
 
     atr_series = ta.atr(df['high'], df['low'], df['close'])
     if atr_series is None or atr_series.isnull().all():
