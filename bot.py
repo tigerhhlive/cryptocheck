@@ -86,23 +86,34 @@ def get_data(timeframe, symbol):
         'aggregate': aggregate,
         'api_key': CRYPTOCOMPARE_API_KEY
     }
+    
     try:
         res = requests.get(url, params=params, timeout=10)
         json_data = res.json()
-        data = json_data.get("Data", {}).get("Data", [])
-        if not data or not isinstance(data, list):
-            logging.warning(f"⚠️ No valid data received for {symbol} in {timeframe}. Raw: {json_data}")
-            return None
-        df = pd.DataFrame(data)
-        if df.empty or df.isnull().all().any():
-            logging.warning(f"⚠️ DataFrame is empty or all null for {symbol} in {timeframe}")
+
+        # Log full API response to check the returned data
+        logging.info(f"API response for {symbol}: {json_data}")
+
+        # If the response contains valid data, print a sample
+        if "Data" in json_data and "Data" in json_data["Data"]:
+            logging.info(f"Valid data received for {symbol}: {json_data['Data']['Data'][:5]}")  # Show the first 5 rows
+        else:
+            logging.warning(f"⚠️ Invalid or no data received for {symbol}.")
+            send_telegram_message(f"⚠️ No valid data for {symbol}. Please check the API response.")
             return None
         
-        # Correct the column names and calculate volume
-        df['timestamp'] = pd.to_datetime(df['time'], unit='s')
-        df['volume'] = df['volumefrom'] + df['volumeto']  # Sum volumefrom and volumeto for volume
+        # Dataframe processing
+        df = pd.DataFrame(json_data["Data"]["Data"])
+        if df.empty or df.isnull().all().any():
+            logging.warning(f"⚠️ DataFrame is empty or contains null values for {symbol}")
+            return None
 
+        df['timestamp'] = pd.to_datetime(df['time'], unit='s')
+        df['volume'] = df['volumefrom'] + df['volumeto']  # Correct volume calculation
+
+        # Return the processed dataframe with required columns
         return df[['timestamp', 'open', 'high', 'low', 'close', 'volume']]
+    
     except Exception as e:
         logging.error(f"❌ Error fetching data for {symbol}: {e}")
         return None
