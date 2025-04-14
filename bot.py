@@ -177,32 +177,32 @@ def analyze_symbol(symbol, timeframe='15m', fast_check=False):
     df['EMA50'] = ta.ema(df['close'], length=50)
     df['rsi'] = ta.rsi(df['close'], length=14)
     macd = ta.macd(df['close'])
-if macd is None or not isinstance(macd, pd.DataFrame) or macd.isnull().all().all():
-    return None, "MACD calculation failed"
+    if macd is None or not isinstance(macd, pd.DataFrame) or macd.isnull().all().all():
+        return None, "MACD calculation failed"
 
-df['MACD'] = macd['MACD_12_26_9']
-df['MACDs'] = macd['MACDs_12_26_9']
+    df['MACD'] = macd['MACD_12_26_9']
+    df['MACDs'] = macd['MACDs_12_26_9']
 
-adx = ta.adx(df['high'], df['low'], df['close'])
-if adx is None or not isinstance(adx, pd.DataFrame):
-    return None, "ADX calculation failed"
+    adx = ta.adx(df['high'], df['low'], df['close'])
+    if adx is None or not isinstance(adx, pd.DataFrame):
+        return None, "ADX calculation failed"
 
-atr_series = ta.atr(df['high'], df['low'], df['close'])
-if atr_series is None or atr_series.isnull().all():
-    return None, "ATR calculation failed"
+    atr_series = ta.atr(df['high'], df['low'], df['close'])
+    if atr_series is None or atr_series.isnull().all():
+        return None, "ATR calculation failed"
 
-df['ATR'] = atr_series
+    df['ATR'] = atr_series
 
     candle = df.iloc[-2]
-    confirm_candle = df.iloc[-1]
-    signal_type = detect_strong_candle(candle) or detect_engulfing(df)
-    pattern = signal_type.replace("_", " ").title() if signal_type else "None"
+confirm_candle = df.iloc[-1]
+signal_type = detect_strong_candle(candle) or detect_engulfing(df)
+pattern = signal_type.replace("_", " ").title() if signal_type else "None"
 
-    rsi_val = df['rsi'].iloc[-2]
-    adx_val = df['ADX'].iloc[-2]
-    entry = df['close'].iloc[-2]
-    atr = df['ATR'].iloc[-2]
-    atr = max(atr, entry * MIN_PERCENT_RISK, MIN_ATR)
+rsi_val = df['rsi'].iloc[-2]
+adx_val = df['ADX'].iloc[-2]
+entry = df['close'].iloc[-2]
+atr = df['ATR'].iloc[-2]
+atr = max(atr, entry * MIN_PERCENT_RISK, MIN_ATR)
 
     above_ema = candle['close'] > candle['EMA20'] and candle['EMA20'] > candle['EMA50']
     below_ema = candle['close'] < candle['EMA20'] and candle['EMA20'] < candle['EMA50']
