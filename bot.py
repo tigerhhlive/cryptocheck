@@ -4,6 +4,7 @@ import logging
 import requests
 import threading
 import pandas as pd
+import pandas_ta as ta
 from flask import Flask
 from datetime import datetime
 
