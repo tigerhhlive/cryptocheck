@@ -212,13 +212,11 @@ def analyze_symbol(symbol, timeframe='15m', fast_check=False):
     confidence = len(confirmations)
     direction = 'Long' if 'bullish' in str(signal_type) and confidence >= 3 else 'Short' if 'bearish' in str(signal_type) and confidence >= 3 else None
 
-    # کندل تأییدیه
     if direction == 'Long' and confirm_candle['close'] <= confirm_candle['open']:
         return None, "Confirmation candle failed"
     if direction == 'Short' and confirm_candle['close'] >= confirm_candle['open']:
         return None, "Confirmation candle failed"
 
-    # نواحی حمایت/مقاومت
     support_zone = df['low'].rolling(window=10).min().iloc[-1]
     resistance_zone = df['high'].rolling(window=10).max().iloc[-1]
     is_near_support = entry <= support_zone * 1.02
@@ -229,7 +227,6 @@ def analyze_symbol(symbol, timeframe='15m', fast_check=False):
     if direction == 'Short' and is_near_support:
         return None, "Too close to support"
 
-    # Break of Structure تشخیص
     prev_high = df['high'].iloc[-5:-2].max()
     prev_low = df['low'].iloc[-5:-2].min()
     bos_long = direction == 'Long' and candle['high'] > prev_high
@@ -240,64 +237,19 @@ def analyze_symbol(symbol, timeframe='15m', fast_check=False):
     if direction == 'Short' and not bos_short:
         return None, "No bearish structure break"
 
-    # پیام هشدار در نواحی مشکوک (حمایت یا مقاومت با ۲ تاییدیه یا فقط کندل قوی)
-    if direction is None and signal_type and is_near_support and confidence >= 2:
-        alert_msg = f"""\
-⚠️ *Potential Buy Zone*  
-Symbol: `{symbol}`
-Price is near support zone with partial confirmations.
-Wait for stronger confirmation to enter. 👀"""
-        return alert_msg, "Watch Only"
-
-    if direction is None and signal_type and is_near_resistance and confidence >= 2:
-        alert_msg = f"""\
-⚠️ *Potential Sell Zone*  
-Symbol: `{symbol}`
-Price is near resistance zone with partial confirmations.
-Watch out for possible reversal. 👀"""
-        return alert_msg, "Watch Only"
-
-    # اگر کندل قوی داریم و در حمایت هستیم حتی بدون تأییدیه → هشدار بده
-    if direction is None and signal_type and is_near_support:
-        alert_msg = f"""\
-🟡 *Watch for Reversal*
-Symbol: `{symbol}`
-Strong bullish candle detected near support zone.
-Might be early stage of reversal, keep an eye on it."""
-        return alert_msg, "Candle Only"
-
-    if direction is None and signal_type and is_near_resistance:
-        alert_msg = f"""\
-🟡 *Watch for Drop*
-Symbol: `{symbol}`
-Strong bearish candle detected near resistance zone.
-Could be early rejection, monitor closely."""
-        return alert_msg, "Candle Only"
-
-    if direction is None and signal_type and is_near_resistance and confidence >= 2:
-        alert_msg = f"""\
-⚠️ *Potential Sell Zone*  
-Symbol: `{symbol}`
-Price is near resistance zone with partial confirmations.
-Watch out for possible reversal. 👀"""
-        return alert_msg, "Watch Only"
-    # هشدار زرد – برگشت احتمالی از حمایت
-if direction is None and is_near_support and candle['close'] > candle['open']:
-    alert_msg = f"""\
-🟡 *Watch for Reversal*
+    if direction is None and is_near_support and candle['close'] > candle['open']:
+        alert_msg = f"""🟡 *Watch for Reversal*
 Symbol: `{symbol}`
 Price is in support zone with bullish candle.
 Could be early reversal – keep an eye on it."""
-    return alert_msg, "Candle Only"
+        return alert_msg, "Candle Only"
 
-# هشدار زرد – برگشت احتمالی از مقاومت
-if direction is None and is_near_resistance and candle['close'] < candle['open']:
-    alert_msg = f"""\
-🟡 *Watch for Drop*
+    if direction is None and is_near_resistance and candle['close'] < candle['open']:
+        alert_msg = f"""🟡 *Watch for Drop*
 Symbol: `{symbol}`
 Price is in resistance zone with bearish candle.
 Could be early rejection – monitor closely."""
-    return alert_msg, "Candle Only"    
+        return alert_msg, "Candle Only"
 
     if direction and not check_cooldown(symbol, direction):
         logging.info(f"{symbol} - DUPLICATE SIGNAL - Skipped due to cooldown")
@@ -316,8 +268,7 @@ Could be early rejection – monitor closely."""
 
         confidence_stars = "🔥" * confidence
 
-        message = f"""\
-🚨 *AI Signal Alert*
+        message = f"""🚨 *AI Signal Alert*
 *Symbol:* `{symbol}`
 *Signal:* {'🟢 BUY MARKET' if direction == 'Long' else '🔴 SELL MARKET'}
 *Pattern:* {pattern}
