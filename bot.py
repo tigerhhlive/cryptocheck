@@ -177,13 +177,21 @@ def analyze_symbol(symbol, timeframe='15m', fast_check=False):
     df['EMA50'] = ta.ema(df['close'], length=50)
     df['rsi'] = ta.rsi(df['close'], length=14)
     macd = ta.macd(df['close'])
-    df['MACD'] = macd['MACD_12_26_9']
-    df['MACDs'] = macd['MACDs_12_26_9']
+if macd is None or not isinstance(macd, pd.DataFrame) or macd.isnull().all().all():
+    return None, "MACD calculation failed"
+
+df['MACD'] = macd['MACD_12_26_9']
+df['MACDs'] = macd['MACDs_12_26_9']
+
     adx = ta.adx(df['high'], df['low'], df['close'])
-    df['ADX'] = adx['ADX_14']
-    df['DI+'] = adx['DMP_14']
-    df['DI-'] = adx['DMN_14']
-    df['ATR'] = ta.atr(df['high'], df['low'], df['close'])
+if adx is None or not isinstance(adx, pd.DataFrame):
+    return None, "ADX calculation failed"
+
+atr_series = ta.atr(df['high'], df['low'], df['close'])
+if atr_series is None or atr_series.isnull().all():
+    return None, "ATR calculation failed"
+
+df['ATR'] = atr_series
 
     candle = df.iloc[-2]
     confirm_candle = df.iloc[-1]
