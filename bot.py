@@ -311,35 +311,39 @@ def analyze_symbol_mtf(symbol):
         tf5_result = analyze_symbol(symbol, '5m', fast_check=True)
         tf15_result = analyze_symbol(symbol, '15m')
 
-        tf5_data = tf5_result[0] if tf5_result and isinstance(tf5_result, tuple) and isinstance(tf5_result[0], dict) else None
-        tf15_data = tf15_result[0] if tf15_result and isinstance(tf15_result, tuple) and isinstance(tf15_result[0], dict) else None
+        # بررسی دقیق نتیجه تحلیل تایم‌فریم 5m
+        tf5_data = None
+        if tf5_result is not None and isinstance(tf5_result, tuple):
+            data5, _ = tf5_result
+            if isinstance(data5, dict):
+                tf5_data = data5
 
-        # این خط رو اضافه می‌کنیم تا مطمئن بشیم tf15_data واقعاً dict هست
-        if not tf15_data or not isinstance(tf15_data, dict):
-            logging.warning(f"⚠️ No valid 15m data for {symbol}")
+        # بررسی دقیق نتیجه تحلیل تایم‌فریم 15m
+        tf15_data = None
+        if tf15_result is not None and isinstance(tf15_result, tuple):
+            data15, _ = tf15_result
+            if isinstance(data15, dict):
+                tf15_data = data15
+
+        # اگر 15m داده معتبر نداد، سیگنالی نیست
+        if not tf15_data:
+            logging.warning(f"⚠️ Skipping {symbol} - no valid 15m data.")
             return None, None
 
-        direction_15 = tf15_data.get("direction")
-        confidence_15 = tf15_data.get("confidence", 0)
-        message_15 = tf15_data.get("message", "")
+        # استخراج امن فیلدها
+        dir_15 = tf15_data.get("direction", None)
+        conf_15 = tf15_data.get("confidence", 0)
+        msg_15 = tf15_data.get("message", "")
 
-        direction_5 = tf5_data.get("direction") if tf5_data and isinstance(tf5_data, dict) else None
-        confidence_5 = tf5_data.get("confidence", 0) if tf5_data and isinstance(tf5_data, dict) else 0
+        dir_5 = tf5_data.get("direction", None) if tf5_data else None
+        conf_5 = tf5_data.get("confidence", 0) if tf5_data else 0
 
-        if direction_15 == direction_5 and confidence_15 >= 3 and confidence_5 >= 2:
-            return message_15, None
+        if dir_15 == dir_5 and conf_15 >= 3 and conf_5 >= 2:
+            return msg_15, None
 
-        if confidence_15 >= 4:
-            return message_15 + "\n⚠️ Strong 15m signal without 5m confirmation.", None
+        if conf_15 >= 4:
+            return msg_15 + "\n⚠️ Strong 15m signal without 5m confirmation.", None
 
-        return None, None
-
-    except Exception as e:
-        logging.error(f"❌ Error analyzing {symbol} (MTF): {e}")
-        return None, None
-
-    except Exception as e:
-        logging.error(f"❌ Error analyzing {symbol} (MTF): {e}")
         return None, None
 
     except Exception as e:
