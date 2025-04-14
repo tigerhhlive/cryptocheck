@@ -262,13 +262,13 @@ Could be early rejection – monitor closely."""
         support = df['low'].rolling(window=10).min().iloc[-2]
 
         if direction == 'Long':
-        sl = entry - atr * ATR_MULTIPLIER_SL
-        tp1 = min(entry + atr * TP1_MULTIPLIER, resistance)
-        tp2 = tp1 + (tp1 - entry) * 1.2
+            sl = entry - atr * ATR_MULTIPLIER_SL
+            tp1 = min(entry + atr * TP1_MULTIPLIER, resistance)
+            tp2 = tp1 + (tp1 - entry) * 1.2
         else:
-        sl = entry + atr * ATR_MULTIPLIER_SL
-        tp1 = max(entry - atr * TP1_MULTIPLIER, support)
-        tp2 = tp1 - (entry - tp1) * 1.2
+            sl = entry + atr * ATR_MULTIPLIER_SL
+            tp1 = max(entry - atr * TP1_MULTIPLIER, support)
+            tp2 = tp1 - (entry - tp1) * 1.2
 
     rr_ratio = abs(tp1 - entry) / abs(entry - sl)
     confidence_stars = "🔥" * confidence
