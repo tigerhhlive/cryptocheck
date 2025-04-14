@@ -4,7 +4,6 @@ import logging
 import requests
 import threading
 import pandas as pd
-import pandas_ta as ta
 from flask import Flask
 from datetime import datetime
 
@@ -71,8 +70,11 @@ def get_data(timeframe, symbol):
         if df.empty or df.isnull().all().any():
             logging.warning(f"⚠️ DataFrame is empty or all null for {symbol} in {timeframe}")
             return None
+        
+        # Correct the column names and calculate volume
         df['timestamp'] = pd.to_datetime(df['time'], unit='s')
-        df['volume'] = df['volumeto']
+        df['volume'] = df['volumefrom'] + df['volumeto']  # Sum volumefrom and volumeto for volume
+
         return df[['timestamp', 'open', 'high', 'low', 'close', 'volume']]
     except Exception as e:
         logging.error(f"❌ Error fetching data for {symbol}: {e}")
@@ -215,7 +217,7 @@ def analyze_symbol(symbol, timeframe='15m', fast_check=False):
     atr = max(atr, entry * MIN_PERCENT_RISK, MIN_ATR)
 
     above_ema = candle['close'] > candle['EMA20'] and candle['EMA20'] > candle['EMA50']
-    below_ema = candle['close'] < candle['EMA20'] and candle['EMA20'] < candle['EMA50']
+    below_ema = candle['close'] < candle['EMA20'] and candle['EMA50'] < candle['EMA20']
 
     confirmations = []
     if (signal_type and 'bullish' in signal_type and rsi_val >= 50) or (signal_type and 'bearish' in signal_type and rsi_val <= 50):
