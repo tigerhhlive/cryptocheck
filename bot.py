@@ -172,11 +172,17 @@ def check_cooldown(symbol, direction):
     return True
 # نسخه بهبود یافته فانکشن analyze_symbol با تشخیص نواحی حمایت/مقاومت، کندل تأییدیه و Break of Structure (BoS)
 
-def analyze_symbol(symbol, timeframe='15m'):
+# نسخه کامل بهینه‌شده analyze_symbol
+
+def analyze_symbol(symbol, timeframe='15m', fast_check=False):
     global daily_signal_count
 
-    df = get_data(timeframe, symbol)
-    if len(df) < 30:
+    if fast_check:
+        df = get_data(timeframe, symbol).tail(15)
+    else:
+        df = get_data(timeframe, symbol)
+
+    if len(df) < 15:
         return None, None
 
     df['EMA20'] = ta.ema(df['close'], length=20)
@@ -246,6 +252,48 @@ def analyze_symbol(symbol, timeframe='15m'):
     if direction == 'Short' and not bos_short:
         return None, "No bearish structure break"
 
+    # پیام هشدار در نواحی مشکوک (حمایت یا مقاومت با ۲ تاییدیه یا فقط کندل قوی)
+    if direction is None and signal_type and is_near_support and confidence >= 2:
+        alert_msg = f"""\
+⚠️ *Potential Buy Zone*  
+Symbol: `{symbol}`
+Price is near support zone with partial confirmations.
+Wait for stronger confirmation to enter. 👀"""
+        return alert_msg, "Watch Only"
+
+    if direction is None and signal_type and is_near_resistance and confidence >= 2:
+        alert_msg = f"""\
+⚠️ *Potential Sell Zone*  
+Symbol: `{symbol}`
+Price is near resistance zone with partial confirmations.
+Watch out for possible reversal. 👀"""
+        return alert_msg, "Watch Only"
+
+    # اگر کندل قوی داریم و در حمایت هستیم حتی بدون تأییدیه → هشدار بده
+    if direction is None and signal_type and is_near_support:
+        alert_msg = f"""\
+🟡 *Watch for Reversal*
+Symbol: `{symbol}`
+Strong bullish candle detected near support zone.
+Might be early stage of reversal, keep an eye on it."""
+        return alert_msg, "Candle Only"
+
+    if direction is None and signal_type and is_near_resistance:
+        alert_msg = f"""\
+🟡 *Watch for Drop*
+Symbol: `{symbol}`
+Strong bearish candle detected near resistance zone.
+Could be early rejection, monitor closely."""
+        return alert_msg, "Candle Only"
+
+    if direction is None and signal_type and is_near_resistance and confidence >= 2:
+        alert_msg = f"""\
+⚠️ *Potential Sell Zone*  
+Symbol: `{symbol}`
+Price is near resistance zone with partial confirmations.
+Watch out for possible reversal. 👀"""
+        return alert_msg, "Watch Only"
+
     if direction and not check_cooldown(symbol, direction):
         logging.info(f"{symbol} - DUPLICATE SIGNAL - Skipped due to cooldown")
         return None, "Duplicate"
@@ -285,7 +333,8 @@ def analyze_symbol(symbol, timeframe='15m'):
 
         return message, None
 
-    logging.info(f"{symbol} - NO SIGNAL | Confirmations: {len(confirmations)}/4")
+    if not fast_check:
+        logging.info(f"{symbol} - NO SIGNAL | Confirmations: {len(confirmations)}/4")
     return None, None
 
 def analyze_symbol_mtf(symbol):
