@@ -303,6 +303,18 @@ def analyze_symbol_mtf(symbol):
         return msg_15m + "\n⚠️ *Strong 15m signal without 5m confirmation.*", None
     return None, None
 
+def analyze_and_alert(sym):
+    try:
+        logging.info(f"🟡 Starting analysis for {sym}")
+        msg, _ = analyze_symbol_mtf(sym)
+        if msg:
+            send_telegram_message(msg)
+            global daily_hit_count
+            daily_hit_count += 1
+        logging.info(f"✅ Done analyzing {sym}")
+    except Exception as e:
+        logging.error(f"❌ Error analyzing {sym}: {e}")
+
 def monitor():
     global daily_signal_count, daily_hit_count, last_report_day
 
@@ -328,14 +340,14 @@ def monitor():
             send_telegram_message("🤖 Bot is alive and scanning signals.")
             last_heartbeat = time.time()
 
+        threads = []
         for sym in symbols:
-            try:
-                msg, _ = analyze_symbol_mtf(sym)
-                if msg:
-                    send_telegram_message(msg)
-                    daily_hit_count += 1
-            except Exception as e:
-                logging.error(f"Error analyzing {sym}: {e}")
+            t = threading.Thread(target=analyze_and_alert, args=(sym,))
+            t.start()
+            threads.append(t)
+
+        for t in threads:
+            t.join()
 
         time.sleep(CHECK_INTERVAL)
 
