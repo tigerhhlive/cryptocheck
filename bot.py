@@ -129,18 +129,6 @@ Total Signals: {total}
 
         time.sleep(MONITOR_INTERVAL)
 
-def analyze_symbol_mtf(symbol):
-    msg_5m, _ = analyze_symbol(symbol, '5m')
-    msg_15m, _ = analyze_symbol(symbol, '15m')
-    if msg_5m and msg_15m:
-        if ("BUY" in msg_5m and "BUY" in msg_15m) or ("SELL" in msg_5m and "SELL" in msg_15m):
-            return msg_15m, None
-    elif msg_15m:
-        confirmations_count = msg_15m.count("🔥")
-        if confirmations_count >= 3:
-            return msg_15m + "\n⚠️ *Strong 15m signal without 5m confirmation.*", None
-    return None, None
-
 def detect_strong_candle(row, threshold=0.7):
     body = abs(row['close'] - row['open'])
     candle_range = row['high'] - row['low']
@@ -156,12 +144,6 @@ def detect_engulfing(df):
         return None
     prev = df.iloc[-3]
     curr = df.iloc[-2]
-    if prev['close'] < prev['open'] and curr['close'] > curr['open'] and curr['close'] > prev['open'] and curr['open'] < prev['close']:
-        return 'bullish_engulfing'
-    if prev['close'] > prev['open'] and curr['close'] < curr['open'] and curr['open'] > prev['close'] and curr['close'] < prev['open']:
-        return 'bearish_engulfing'
-    return None
-
     if prev['close'] < prev['open'] and curr['close'] > curr['open'] and curr['close'] > prev['open'] and curr['open'] < prev['close']:
         return 'bullish_engulfing'
     if prev['close'] > prev['open'] and curr['close'] < curr['open'] and curr['open'] > prev['close'] and curr['close'] < prev['open']:
@@ -299,8 +281,7 @@ Symbol: `{symbol}`
 Price is near resistance zone with partial confirmations.
 Watch out for possible reversal. 👀"""
         return alert_msg, "Watch Only"
-        
-# هشدار زرد – برگشت احتمالی از حمایت
+    # هشدار زرد – برگشت احتمالی از حمایت
 if direction is None and is_near_support and candle['close'] > candle['open']:
     alert_msg = f"""\
 🟡 *Watch for Reversal*
@@ -316,7 +297,7 @@ if direction is None and is_near_resistance and candle['close'] < candle['open']
 Symbol: `{symbol}`
 Price is in resistance zone with bearish candle.
 Could be early rejection – monitor closely."""
-    return alert_msg, "Candle Only"
+    return alert_msg, "Candle Only"    
 
     if direction and not check_cooldown(symbol, direction):
         logging.info(f"{symbol} - DUPLICATE SIGNAL - Skipped due to cooldown")
