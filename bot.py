@@ -308,36 +308,33 @@ Price is in resistance zone with bearish candle."""
     
 def analyze_symbol_mtf(symbol):
     try:
-        # اجرای هر دو تایم‌فریم
         tf5_result = analyze_symbol(symbol, '5m', fast_check=True)
         tf15_result = analyze_symbol(symbol, '15m')
 
+        # بررسی tf5_result
         tf5_data = None
-        tf15_data = None
-
-        # بررسی دقیق tf5_result
-        if tf5_result and isinstance(tf5_result, tuple):
+        if tf5_result and isinstance(tf5_result, tuple) and len(tf5_result) >= 1:
             part = tf5_result[0]
-            if part and isinstance(part, dict):
+            if isinstance(part, dict):
                 tf5_data = part
 
-        # بررسی دقیق tf15_result
-        if tf15_result and isinstance(tf15_result, tuple):
+        # بررسی tf15_result
+        tf15_data = None
+        if tf15_result and isinstance(tf15_result, tuple) and len(tf15_result) >= 1:
             part = tf15_result[0]
-            if part and isinstance(part, dict):
+            if isinstance(part, dict):
                 tf15_data = part
 
-        # اگر tf15_data معتبر نیست، ادامه نمی‌دیم
-        if not tf15_data:
-            logging.warning(f"⚠️ No 15m data for {symbol}")
+        # چک نهایی tf15_data
+        if not tf15_data or not isinstance(tf15_data, dict):
+            logging.warning(f"⚠️ Invalid or no 15m data for {symbol}")
             return None, None
 
-        # استخراج مقادیر با خیال راحت
-        dir_15 = tf15_data.get("direction")
+        dir_15 = tf15_data.get("direction", None)
         conf_15 = tf15_data.get("confidence", 0)
         msg_15 = tf15_data.get("message", "")
 
-        dir_5 = tf5_data.get("direction") if tf5_data else None
+        dir_5 = tf5_data.get("direction", None) if tf5_data else None
         conf_5 = tf5_data.get("confidence", 0) if tf5_data else 0
 
         if dir_15 == dir_5 and conf_15 >= 3 and conf_5 >= 2:
@@ -349,7 +346,7 @@ def analyze_symbol_mtf(symbol):
         return None, None
 
     except Exception as e:
-        logging.error(f"❌ Error analyzing {symbol} (MTF): {e}")
+        logging.error(f"❌ Error analyzing {symbol} (MTF): {type(e).__name__} - {e}")
         return None, None
 
 def analyze_and_alert(sym):
