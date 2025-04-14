@@ -179,7 +179,8 @@ def analyze_symbol(symbol, timeframe='15m', fast_check=False):
         df = get_data(timeframe, symbol)
 
     if len(df) < 15:
-        return None, "Data too short"
+        logging.warning(f"⚠️ Invalid or no 15m data for {symbol}. Length of data: {len(df)}")
+        return None, "Data too short or incomplete"
 
     df['EMA20'] = ta.ema(df['close'], length=20)
     df['EMA50'] = ta.ema(df['close'], length=50)
