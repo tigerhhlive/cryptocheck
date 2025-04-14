@@ -307,21 +307,28 @@ Price is in resistance zone with bearish candle."""
     return None, None
 
 def analyze_symbol_mtf(symbol):
-    tf5_data, _ = analyze_symbol(symbol, '5m', fast_check=True)
-    tf15_data, _ = analyze_symbol(symbol, '15m')
+    try:
+        tf5_result = analyze_symbol(symbol, '5m', fast_check=True)
+        tf15_result = analyze_symbol(symbol, '15m')
 
-    if not tf15_data or not isinstance(tf15_data, dict):
+        tf5_data, _ = tf5_result if isinstance(tf5_result, tuple) else (None, None)
+        tf15_data, _ = tf15_result if isinstance(tf15_result, tuple) else (None, None)
+
+        if not isinstance(tf15_data, dict):
+            return None, None
+
+        if isinstance(tf5_data, dict) and tf5_data.get("direction") == tf15_data.get("direction"):
+            if tf15_data.get("confidence", 0) >= 3 and tf5_data.get("confidence", 0) >= 2:
+                return tf15_data["message"], None
+
+        if tf15_data.get("confidence", 0) >= 4:
+            return tf15_data["message"] + "\n⚠️ Strong 15m signal without 5m confirmation.", None
+
         return None, None
 
-    if tf5_data and isinstance(tf5_data, dict):
-        if tf5_data['direction'] == tf15_data['direction']:
-            if tf15_data['confidence'] >= 3 and tf5_data['confidence'] >= 2:
-                return tf15_data['message'], None
-
-    if tf15_data['confidence'] >= 4:
-        return tf15_data['message'] + "\n⚠️ Strong 15m signal without 5m confirmation.", None
-
-    return None, None
+    except Exception as e:
+        logging.error(f"❌ Error analyzing {symbol} (MTF): {e}")
+        return None, None
 
 def analyze_and_alert(sym):
     try:
