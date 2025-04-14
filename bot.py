@@ -256,10 +256,10 @@ Could be early rejection – monitor closely."""
         return None, "Duplicate"
 
     if direction:
-    daily_signal_count += 1
+        daily_signal_count += 1
 
-    resistance = df['high'].rolling(window=10).max().iloc[-2]
-    support = df['low'].rolling(window=10).min().iloc[-2]
+        resistance = df['high'].rolling(window=10).max().iloc[-2]
+        support = df['low'].rolling(window=10).min().iloc[-2]
 
     if direction == 'Long':
         sl = entry - atr * ATR_MULTIPLIER_SL
