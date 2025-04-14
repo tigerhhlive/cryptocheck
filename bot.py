@@ -311,8 +311,14 @@ def analyze_symbol_mtf(symbol):
         tf5_result = analyze_symbol(symbol, '5m', fast_check=True)
         tf15_result = analyze_symbol(symbol, '15m')
 
-        tf5_data = tf5_result[0] if isinstance(tf5_result, tuple) and isinstance(tf5_result[0], dict) else None
-        tf15_data = tf15_result[0] if isinstance(tf15_result, tuple) and isinstance(tf15_result[0], dict) else None
+        tf5_data = None
+        tf15_data = None
+
+        if tf5_result and isinstance(tf5_result, tuple) and isinstance(tf5_result[0], dict):
+            tf5_data = tf5_result[0]
+
+        if tf15_result and isinstance(tf15_result, tuple) and isinstance(tf15_result[0], dict):
+            tf15_data = tf15_result[0]
 
         if not tf15_data:
             return None, None
