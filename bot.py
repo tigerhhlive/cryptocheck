@@ -183,7 +183,7 @@ if macd is None or not isinstance(macd, pd.DataFrame) or macd.isnull().all().all
 df['MACD'] = macd['MACD_12_26_9']
 df['MACDs'] = macd['MACDs_12_26_9']
 
-    adx = ta.adx(df['high'], df['low'], df['close'])
+adx = ta.adx(df['high'], df['low'], df['close'])
 if adx is None or not isinstance(adx, pd.DataFrame):
     return None, "ADX calculation failed"
 
