@@ -152,10 +152,16 @@ def detect_strong_candle(row, threshold=0.7):
     return None
 
 def detect_engulfing(df):
-    if len(df) < 2:
+    if len(df) < 3:
         return None
-    prev = df.iloc[-2]
-    curr = df.iloc[-1]
+    prev = df.iloc[-3]
+    curr = df.iloc[-2]
+    if prev['close'] < prev['open'] and curr['close'] > curr['open'] and curr['close'] > prev['open'] and curr['open'] < prev['close']:
+        return 'bullish_engulfing'
+    if prev['close'] > prev['open'] and curr['close'] < curr['open'] and curr['open'] > prev['close'] and curr['close'] < prev['open']:
+        return 'bearish_engulfing'
+    return None
+
     if prev['close'] < prev['open'] and curr['close'] > curr['open'] and curr['close'] > prev['open'] and curr['open'] < prev['close']:
         return 'bullish_engulfing'
     if prev['close'] > prev['open'] and curr['close'] < curr['open'] and curr['open'] > prev['close'] and curr['close'] < prev['open']:
@@ -199,7 +205,7 @@ def analyze_symbol(symbol, timeframe='15m', fast_check=False):
 
     candle = df.iloc[-2]
     confirm_candle = df.iloc[-1]
-    signal_type = detect_strong_candle(candle) or detect_engulfing(df[:-1])
+    signal_type = detect_strong_candle(candle) or detect_engulfing(df)
     pattern = signal_type.replace("_", " ").title() if signal_type else "None"
 
     rsi_val = df['rsi'].iloc[-2]
@@ -293,6 +299,24 @@ Symbol: `{symbol}`
 Price is near resistance zone with partial confirmations.
 Watch out for possible reversal. 👀"""
         return alert_msg, "Watch Only"
+        
+# هشدار زرد – برگشت احتمالی از حمایت
+if direction is None and is_near_support and candle['close'] > candle['open']:
+    alert_msg = f"""\
+🟡 *Watch for Reversal*
+Symbol: `{symbol}`
+Price is in support zone with bullish candle.
+Could be early reversal – keep an eye on it."""
+    return alert_msg, "Candle Only"
+
+# هشدار زرد – برگشت احتمالی از مقاومت
+if direction is None and is_near_resistance and candle['close'] < candle['open']:
+    alert_msg = f"""\
+🟡 *Watch for Drop*
+Symbol: `{symbol}`
+Price is in resistance zone with bearish candle.
+Could be early rejection – monitor closely."""
+    return alert_msg, "Candle Only"
 
     if direction and not check_cooldown(symbol, direction):
         logging.info(f"{symbol} - DUPLICATE SIGNAL - Skipped due to cooldown")
