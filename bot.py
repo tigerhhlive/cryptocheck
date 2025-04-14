@@ -158,9 +158,6 @@ def check_cooldown(symbol, direction):
         return False
     last_signals[key] = now
     return True
-# نسخه بهبود یافته فانکشن analyze_symbol با تشخیص نواحی حمایت/مقاومت، کندل تأییدیه و Break of Structure (BoS)
-
-# نسخه کامل بهینه‌شده analyze_symbol
 
 def analyze_symbol(symbol, timeframe='15m', fast_check=False):
     global daily_signal_count
@@ -186,39 +183,41 @@ def analyze_symbol(symbol, timeframe='15m', fast_check=False):
     adx = ta.adx(df['high'], df['low'], df['close'])
     if adx is None or not isinstance(adx, pd.DataFrame):
         return None, "ADX calculation failed"
+    df['ADX'] = adx['ADX']
 
     atr_series = ta.atr(df['high'], df['low'], df['close'])
     if atr_series is None or atr_series.isnull().all():
         return None, "ATR calculation failed"
-
     df['ATR'] = atr_series
 
     candle = df.iloc[-2]
-confirm_candle = df.iloc[-1]
-signal_type = detect_strong_candle(candle) or detect_engulfing(df)
-pattern = signal_type.replace("_", " ").title() if signal_type else "None"
+    confirm_candle = df.iloc[-1]
+    signal_type = detect_strong_candle(candle) or detect_engulfing(df)
+    pattern = signal_type.replace("_", " ").title() if signal_type else "None"
 
-rsi_val = df['rsi'].iloc[-2]
-adx_val = df['ADX'].iloc[-2]
-entry = df['close'].iloc[-2]
-atr = df['ATR'].iloc[-2]
-atr = max(atr, entry * MIN_PERCENT_RISK, MIN_ATR)
+    rsi_val = df['rsi'].iloc[-2]
+    adx_val = df['ADX'].iloc[-2]
+    entry = df['close'].iloc[-2]
+    atr = df['ATR'].iloc[-2]
+    atr = max(atr, entry * MIN_PERCENT_RISK, MIN_ATR)
 
-above_ema = candle['close'] > candle['EMA20'] and candle['EMA20'] > candle['EMA50']
-below_ema = candle['close'] < candle['EMA20'] and candle['EMA20'] < candle['EMA50']
+    above_ema = candle['close'] > candle['EMA20'] and candle['EMA20'] > candle['EMA50']
+    below_ema = candle['close'] < candle['EMA20'] and candle['EMA20'] < candle['EMA50']
 
-confirmations = []
-if (signal_type and 'bullish' in signal_type and rsi_val >= 50) or (signal_type and 'bearish' in signal_type and rsi_val <= 50):
+    confirmations = []
+    if (signal_type and 'bullish' in signal_type and rsi_val >= 50) or (signal_type and 'bearish' in signal_type and rsi_val <= 50):
         confirmations.append("RSI")
-if (df['MACD'].iloc[-2] > df['MACDs'].iloc[-2]) if 'bullish' in str(signal_type) else (df['MACD'].iloc[-2] < df['MACDs'].iloc[-2]):
+    if ((df['MACD'].iloc[-2] > df['MACDs'].iloc[-2]) if ('bullish' in str(signal_type)) 
+            else (df['MACD'].iloc[-2] < df['MACDs'].iloc[-2])):
         confirmations.append("MACD")
-if adx_val > ADX_THRESHOLD:
+    if adx_val > ADX_THRESHOLD:
         confirmations.append("ADX")
-if ('bullish' in str(signal_type) and above_ema) or ('bearish' in str(signal_type) and below_ema):
+    if ('bullish' in str(signal_type) and above_ema) or ('bearish' in str(signal_type) and below_ema):
         confirmations.append("EMA")
 
-confidence = len(confirmations)
-direction = 'Long' if 'bullish' in str(signal_type) and confidence >= 3 else 'Short' if 'bearish' in str(signal_type) and confidence >= 3 else None
+    confidence = len(confirmations)
+    direction = 'Long' if 'bullish' in str(signal_type) and confidence >= 3 \
+                else 'Short' if 'bearish' in str(signal_type) and confidence >= 3 else None
 
     if direction == 'Long' and confirm_candle['close'] <= confirm_candle['open']:
         return None, "Confirmation candle failed"
@@ -246,15 +245,8 @@ direction = 'Long' if 'bullish' in str(signal_type) and confidence >= 3 else 'Sh
         return None, "No bearish structure break"
 
     if direction is None and is_near_support and candle['close'] > candle['open']:
-        alert_msg = f"""🟡 *Watch for Reversal*
-Symbol: `{symbol}`
-Price is in support zone with bullish candle."""
         return None, "Candle Only"
-
     if direction is None and is_near_resistance and candle['close'] < candle['open']:
-        alert_msg = f"""🟡 *Watch for Drop*
-Symbol: `{symbol}`
-Price is in resistance zone with bearish candle."""
         return None, "Candle Only"
 
     if direction and not check_cooldown(symbol, direction):
@@ -309,31 +301,23 @@ Price is in resistance zone with bearish candle."""
 
     return None, None
 
-
-    if not fast_check:
-        logging.info(f"{symbol} - NO SIGNAL | Confirmations: {len(confirmations)}/4")
-    return None, None
-    
 def analyze_symbol_mtf(symbol):
     try:
         tf5_result = analyze_symbol(symbol, '5m', fast_check=True)
         tf15_result = analyze_symbol(symbol, '15m')
 
-        # بررسی tf5_result
         tf5_data = None
         if tf5_result and isinstance(tf5_result, tuple) and len(tf5_result) >= 1:
             part = tf5_result[0]
             if isinstance(part, dict):
                 tf5_data = part
 
-        # بررسی tf15_result
         tf15_data = None
         if tf15_result and isinstance(tf15_result, tuple) and len(tf15_result) >= 1:
             part = tf15_result[0]
             if isinstance(part, dict):
                 tf15_data = part
 
-        # چک نهایی tf15_data
         if not tf15_data or not isinstance(tf15_data, dict):
             logging.warning(f"⚠️ Invalid or no 15m data for {symbol}")
             return None, None
@@ -354,11 +338,10 @@ def analyze_symbol_mtf(symbol):
         return None, None
 
     except Exception as e:
-            import traceback
-            tb = traceback.format_exc()
-            logging.error(f"❌ Error analyzing {symbol} (MTF): {type(e).__name__} - {e}\nTraceback:\n{tb}")
-            return None, None
-
+        import traceback
+        tb = traceback.format_exc()
+        logging.error(f"❌ Error analyzing {symbol} (MTF): {type(e).__name__} - {e}\nTraceback:\n{tb}")
+        return None, None
 
 def analyze_and_alert(sym):
     try:
