@@ -183,7 +183,10 @@ def analyze_symbol(symbol, timeframe='15m', fast_check=False):
     adx = ta.adx(df['high'], df['low'], df['close'])
     if adx is None or not isinstance(adx, pd.DataFrame):
         return None, "ADX calculation failed"
-    df['ADX'] = adx['ADX']
+    df['ADX'] = adx['ADX_14']
+    df['DI+'] = adx['DMP_14']
+    df['DI-'] = adx['DMN_14']
+
 
     atr_series = ta.atr(df['high'], df['low'], df['close'])
     if atr_series is None or atr_series.isnull().all():
