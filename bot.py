@@ -1,4 +1,5 @@
 import os
+import requests
 import time
 import logging
 import requests
@@ -74,21 +75,35 @@ def get_data(timeframe, symbol):
     
     return df[['timestamp', 'open', 'high', 'low', 'close', 'volume']]
 
+import requests
+
 # اضافه کردن API اخبار
 def fetch_news():
     url = "https://cryptocontrol.io/api/v1/public/news"
     headers = {
-        'Authorization': f"Bearer {3788a1f05c7d472a94700d5c35cd465f}"
+        'Authorization': 'Bearer 3788a1f05c7d472a94700d5c35cd465f'  # API Key به‌طور مستقیم در هدر
     }
     params = {
-        'lang': 'en',
-        'categories': 'all',
-        'limit': 5  # تعداد اخبار محدود به 5 خبر
+        'lang': 'en',  # زبان اخبار انگلیسی
+        'categories': 'all',  # دسته‌بندی اخبار
+        'limit': 5  # محدود به 5 خبر
     }
-    response = requests.get(url, headers=headers, params=params)
-    news_data = response.json()
     
-    return news_data  # داده‌های خبری را برمی‌گرداند
+    # ارسال درخواست به API
+    try:
+        response = requests.get(url, headers=headers, params=params)
+        response.raise_for_status()  # بررسی وضعیت پاسخ (برای شبیه‌سازی خطا در صورت لزوم)
+        
+        news_data = response.json()  # تبدیل داده‌های JSON به دیکشنری
+        
+        if 'data' in news_data:  # بررسی وجود داده‌ها
+            return news_data['data']  # داده‌های خبری را برمی‌گرداند
+        else:
+            print("No news data found.")
+            return None
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching news: {e}")
+        return None
 
 def analyze_sentiment():
     """
