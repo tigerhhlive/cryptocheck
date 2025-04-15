@@ -269,6 +269,42 @@ def analyze_and_alert(sym):
     except Exception as e:
         logging.error(f"❌ Error analyzing {sym}: {e}")
 
+def monitor():
+    global daily_signal_count, daily_hit_count, last_report_day
+
+    symbols = [
+        "BTCUSDT", "ETHUSDT", "DOGEUSDT", "BNBUSDT", "XRPUSDT",
+        "RENDERUSDT", "TRUMPUSDT", "FARTCOINUSDT", "XLMUSDT",
+        "SHIBUSDT", "ADAUSDT", "NOTUSDT", "PROMUSDT", "PENDLEUSDT"
+    ]
+    last_heartbeat = 0
+
+    while True:
+        now = datetime.utcnow()
+        tehran_hour = (now.hour + 3) % 24
+        tehran_min = now.minute
+        current_day = now.date()
+
+        if SLEEP_HOURS[0] <= tehran_hour < SLEEP_HOURS[1]:
+            logging.info("Sleeping hours")
+            time.sleep(60)
+            continue
+
+        if time.time() - last_heartbeat > HEARTBEAT_INTERVAL:
+            send_telegram_message("🤖 Bot is alive and scanning signals.")
+            last_heartbeat = time.time()
+
+        threads = []
+        for sym in symbols:
+            t = threading.Thread(target=analyze_and_alert, args=(sym,))
+            t.start()
+            threads.append(t)
+
+        for t in threads:
+            t.join()
+
+        time.sleep(CHECK_INTERVAL)
+
 # شروع و اجرای برنامه
 if __name__ == '__main__':
     threading.Thread(target=monitor, daemon=True).start()
