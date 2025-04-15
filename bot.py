@@ -38,6 +38,7 @@ sl_count = 0
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+# ارسال پیام به تلگرام
 def send_telegram_message(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
@@ -48,9 +49,12 @@ def send_telegram_message(message):
     except Exception as e:
         logging.error(f"Telegram exception: {e}")
 
+# دریافت داده‌ها از API CryptoCompare
 def get_data(timeframe, symbol):
     url = "https://min-api.cryptocompare.com/data/v2/histominute"
-    aggregate = 5 if timeframe == '5m' else 15
+    
+    # تغییرات فریم‌های زمانی بلندمدت
+    aggregate = 5 if timeframe == '5m' else 15 if timeframe == '15m' else 30 if timeframe == '30m' else 60 if timeframe == '1h' else 1440  # روزانه (1d)
     limit = 60
     fsym, tsym = symbol[:-4], "USDT"
     params = {
@@ -70,110 +74,64 @@ def get_data(timeframe, symbol):
     
     return df[['timestamp', 'open', 'high', 'low', 'close', 'volume']]
 
+# اضافه کردن API اخبار
+def fetch_news():
+    url = "https://cryptocontrol.io/api/v1/public/news"
+    headers = {
+        'Authorization': f"Bearer {3788a1f05c7d472a94700d5c35cd465f}"
+    }
+    params = {
+        'lang': 'en',
+        'categories': 'all',
+        'limit': 5  # تعداد اخبار محدود به 5 خبر
+    }
+    response = requests.get(url, headers=headers, params=params)
+    news_data = response.json()
+    
+    return news_data  # داده‌های خبری را برمی‌گرداند
 
-def monitor_positions():
-    global tp1_count, tp2_count, sl_count, last_report_day, daily_signal_count, daily_hit_count
-    while True:
-        for symbol, pos in list(open_positions.items()):
-            try:
-                df = get_data('15m', symbol)
-                current_price = df['close'].iloc[-1]
-                direction = pos['direction']
+def analyze_sentiment():
+    """
+    این تابع اخبار بازار را دریافت کرده و تحلیل احساسات بازار را انجام می‌دهد.
+    """
+    news_data = fetch_news()
+    
+    # تحلیل اخبار (میتوانید از مدل‌های پیشرفته‌تر برای تحلیل احساسات استفاده کنید)
+    sentiment_score = 0
+    for news_item in news_data['data']:
+        sentiment_score += int(news_item['positive'] - news_item['negative'])  # تحلیل ساده برای احساسات
 
-                if direction == 'Long':
-                    if current_price >= pos['tp2']:
-                        send_telegram_message(f"✅ *{symbol} TP2 Hit* - Full Target Reached. Position Closed.")
-                        tp2_count += 1
-                        del open_positions[symbol]
-                    elif current_price >= pos['tp1']:
-                        send_telegram_message(f"🎯 *{symbol} TP1 Hit* - Consider Partial Close.")
-                        tp1_count += 1
-                    elif current_price <= pos['sl']:
-                        send_telegram_message(f"❌ *{symbol} SL Hit* - Position Closed.")
-                        sl_count += 1
-                        del open_positions[symbol]
+    return sentiment_score
 
-                if direction == 'Short':
-                    if current_price <= pos['tp2']:
-                        send_telegram_message(f"✅ *{symbol} TP2 Hit* - Full Target Reached. Position Closed.")
-                        tp2_count += 1
-                        del open_positions[symbol]
-                    elif current_price <= pos['tp1']:
-                        send_telegram_message(f"🎯 *{symbol} TP1 Hit* - Consider Partial Close.")
-                        tp1_count += 1
-                    elif current_price >= pos['sl']:
-                        send_telegram_message(f"❌ *{symbol} SL Hit* - Position Closed.")
-                        sl_count += 1
-                        del open_positions[symbol]
-            except Exception as e:
-                logging.error(f"Monitor error for {symbol}: {e}")
+def set_dynamic_stop_loss_take_profit(entry, atr, direction):
+    """
+    این تابع برای تنظیم داینامیک SL و TP برای معامله استفاده می‌شود.
+    """
+    if direction == 'Long':
+        sl = entry - atr * ATR_MULTIPLIER_SL
+        tp1 = entry + atr * TP1_MULTIPLIER
+        tp2 = entry + atr * TP2_MULTIPLIER
+    elif direction == 'Short':
+        sl = entry + atr * ATR_MULTIPLIER_SL
+        tp1 = entry - atr * TP1_MULTIPLIER
+        tp2 = entry - atr * TP2_MULTIPLIER
 
-        now = datetime.utcnow()
-        tehran_hour = (now.hour + 3) % 24
-        tehran_min = now.minute
-        current_day = now.date()
+    return sl, tp1, tp2
 
-        if tehran_hour == 23 and tehran_min >= 55 and current_day != last_report_day:
-            total = daily_signal_count
-            winrate = round(((tp1_count + tp2_count) / total) * 100, 1) if total > 0 else 0.0
-            report = f"""📊 *Daily Performance Report*
-Total Signals: {total}
-🎯 TP1 Hit: {tp1_count}
-✅ TP2 Hit: {tp2_count}
-❌ SL Hit: {sl_count}
-📈 Estimated Winrate: {winrate}%"""
-            send_telegram_message(report)
-            last_report_day = current_day
-            daily_signal_count = 0
-            daily_hit_count = 0
-            tp1_count = 0
-            tp2_count = 0
-            sl_count = 0
-            send_telegram_message("😴 Bot going to sleep. See you tomorrow!")
+def dynamic_threshold_adjustment(df):
+    """
+    این تابع برای تنظیم آستانه‌های هوشمند (مثل RSI و EMA) قبل از محاسبه اندیکاتورها استفاده می‌شود.
+    """
+    # تنظیمات هوشمند برای اندیکاتورها (می‌توانید این را بر اساس نیاز خود تنظیم کنید)
+    if df['rsi'].iloc[-2] < 30:
+        rsi_threshold = 25  # تنظیم آستانه برای RSI پایین
+    elif df['rsi'].iloc[-2] > 70:
+        rsi_threshold = 75  # تنظیم آستانه برای RSI بالا
+    else:
+        rsi_threshold = 50  # آستانه معمولی برای RSI
 
-        time.sleep(MONITOR_INTERVAL)
-
-def analyze_symbol_mtf(symbol):
-    msg_5m, _ = analyze_symbol(symbol, '5m')
-    msg_15m, _ = analyze_symbol(symbol, '15m')
-    if msg_5m and msg_15m:
-        if ("BUY" in msg_5m and "BUY" in msg_15m) or ("SELL" in msg_5m and "SELL" in msg_15m):
-            return msg_15m, None
-    elif msg_15m:
-        confirmations_count = msg_15m.count("🔥")
-        if confirmations_count >= 3:
-            return msg_15m + "\n⚠️ *Strong 15m signal without 5m confirmation.*", None
-    return None, None
-
-def detect_strong_candle(row, threshold=0.7):
-    body = abs(row['close'] - row['open'])
-    candle_range = row['high'] - row['low']
-    if candle_range == 0:
-        return None
-    ratio = body / candle_range
-    if ratio > threshold:
-        return 'bullish_marubozu' if row['close'] > row['open'] else 'bearish_marubozu'
-    return None
-
-def detect_engulfing(df):
-    if len(df) < 2:
-        return None
-    prev = df.iloc[-2]
-    curr = df.iloc[-1]
-    if prev['close'] < prev['open'] and curr['close'] > curr['open'] and curr['close'] > prev['open'] and curr['open'] < prev['close']:
-        return 'bullish_engulfing'
-    if prev['close'] > prev['open'] and curr['close'] < curr['open'] and curr['open'] > prev['close'] and curr['close'] < prev['open']:
-        return 'bearish_engulfing'
-    return None
-
-def check_cooldown(symbol, direction):
-    key = f"{symbol}_{direction}"
-    last_time = last_signals.get(key)
-    now = time.time()
-    if last_time and (now - last_time < SIGNAL_COOLDOWN):
-        return False
-    last_signals[key] = now
-    return True
+    # برای EMA و دیگر اندیکاتورها هم می‌توان همین کار را انجام داد.
+    return rsi_threshold
 
 def analyze_symbol(symbol, timeframe='15m'):
     global daily_signal_count
@@ -181,6 +139,8 @@ def analyze_symbol(symbol, timeframe='15m'):
     df = get_data(timeframe, symbol)
     if len(df) < 30:
         return None, None
+
+    rsi_threshold = dynamic_threshold_adjustment(df)  # تنظیم آستانه‌های هوشمند
 
     df['EMA20'] = ta.ema(df['close'], length=20)
     df['EMA50'] = ta.ema(df['close'], length=50)
@@ -204,6 +164,9 @@ def analyze_symbol(symbol, timeframe='15m'):
     atr = df['ATR'].iloc[-2]
     atr = max(atr, entry * MIN_PERCENT_RISK, MIN_ATR)
 
+    # استفاده از تحلیل احساسات بازار
+    sentiment_score = analyze_sentiment()
+
     above_ema = candle['close'] > candle['EMA20'] and candle['EMA20'] > candle['EMA50']
     below_ema = candle['close'] < candle['EMA20'] and candle['EMA20'] < candle['EMA50']
 
@@ -226,37 +189,23 @@ def analyze_symbol(symbol, timeframe='15m'):
 
     if direction:
         daily_signal_count += 1
-        sl = entry - atr * ATR_MULTIPLIER_SL if direction == 'Long' else entry + atr * ATR_MULTIPLIER_SL
-        tp1 = entry + atr * TP1_MULTIPLIER if direction == 'Long' else entry - atr * TP1_MULTIPLIER
-        tp2 = entry + atr * TP2_MULTIPLIER if direction == 'Long' else entry - atr * TP2_MULTIPLIER
-        rr_ratio = abs(tp1 - entry) / abs(entry - sl)
-        TP1_MULT = max(1.5, round(rr_ratio * 1.1, 1))
-        TP2_MULT = round(TP1_MULT * 1.5, 1)
-        tp1 = entry + atr * TP1_MULT if direction == 'Long' else entry - atr * TP1_MULT
-        tp2 = entry + atr * TP2_MULT if direction == 'Long' else entry - atr * TP2_MULT
-
+        sl, tp1, tp2 = set_dynamic_stop_loss_take_profit(entry, atr, direction)  # استفاده از SL و TP داینامیک
         confidence_stars = "🔥" * confidence
 
         message = f"""🚨 *AI Signal Alert*
 *Symbol:* `{symbol}`
 *Signal:* {'🟢 BUY MARKET' if direction == 'Long' else '🔴 SELL MARKET'}
 *Pattern:* {pattern}
-*Confirmed by:* {", ".join(confirmations) if confirmations else 'None'}
-*Entry:* `{entry:.6f}`
-*Stop Loss:* `{sl:.6f}`
-*Target 1:* `{tp1:.6f}`
-*Target 2:* `{tp2:.6f}`
-*Leverage (est.):* `{rr_ratio:.2f}X`
-*Signal Strength:* {confidence_stars}"""
+*Confidence:* {confidence_stars}
+*Entry:* {entry}
+*Stop Loss:* {sl}
+*Take Profit 1:* {tp1}
+*Take Profit 2:* {tp2}"""
 
-        open_positions[symbol] = {
-            'direction': direction,
-            'sl': sl,
-            'tp1': tp1,
-            'tp2': tp2
-        }
+        send_telegram_message(message)
 
-        return message, None
+    return direction, message
+
 
     logging.info(f"{symbol} - NO SIGNAL | Confirmations: {len(confirmations)}/4")
     return None, None
