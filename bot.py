@@ -2,7 +2,6 @@ import os
 import requests
 import time
 import logging
-import requests
 import threading
 import pandas as pd
 import pandas_ta as ta
@@ -74,8 +73,6 @@ def get_data(timeframe, symbol):
     df['volume'] = df['volumeto']  # 'volumeto' به 'volume' تبدیل می‌شود
     
     return df[['timestamp', 'open', 'high', 'low', 'close', 'volume']]
-
-import requests
 
 # اضافه کردن API اخبار
 def fetch_news():
@@ -222,9 +219,6 @@ def analyze_symbol(symbol, timeframe='15m'):
     return direction, message
 
 
-    logging.info(f"{symbol} - NO SIGNAL | Confirmations: {len(confirmations)}/4")
-    return None, None
-
 def analyze_symbol_mtf(symbol):
     msg_5m, _ = analyze_symbol(symbol, '5m')
     msg_15m, _ = analyze_symbol(symbol, '15m')
@@ -234,6 +228,16 @@ def analyze_symbol_mtf(symbol):
     elif msg_15m and ("🔥🔥🔥" in msg_15m):
         return msg_15m + "\n⚠️ *Strong 15m signal without 5m confirmation.*", None
     return None, None
+
+def monitor_positions():
+    """
+    تابع برای بررسی وضعیت پوزیشن‌ها و مدیریت آن‌ها.
+    """
+    # کد مدیریت پوزیشن‌ها (فرضی یا می‌تواند بسته به نیاز شما اضافه شود)
+    while True:
+        # بررسی وضعیت پوزیشن‌ها
+        # و سایر وظایف مرتبط
+        time.sleep(MONITOR_INTERVAL)
 
 def monitor():
     global daily_signal_count, daily_hit_count, last_report_day
