@@ -148,15 +148,31 @@ def dynamic_threshold_adjustment(df):
 def analyze_symbol(symbol, timeframe='15m'):
     global daily_signal_count
 
+    # دریافت داده‌ها از API یا منبع داده
     df = get_data(timeframe, symbol)
+    
+    # بررسی تعداد داده‌ها
     if len(df) < 30:
-        return None, None
+        logging.error(f"Not enough data for {symbol} to analyze.")
+        return None, "Not enough data"
+
+    # بررسی داده‌ها برای محاسبه RSI
+    if len(df) < 14:
+        logging.error(f"Not enough data for RSI calculation for {symbol}")
+        return None, "Not enough data for RSI"
+
+    # محاسبه RSI و اضافه کردن مدیریت خطا
+    try:
+        df['rsi'] = ta.rsi(df['close'], length=14)
+    except Exception as e:
+        logging.error(f"Error calculating RSI for {symbol}: {e}")
+        return None, f"Error calculating RSI: {e}"
 
     rsi_threshold = dynamic_threshold_adjustment(df)  # تنظیم آستانه‌های هوشمند
 
+    # محاسبه EMA، MACD و دیگر اندیکاتورها
     df['EMA20'] = ta.ema(df['close'], length=20)
     df['EMA50'] = ta.ema(df['close'], length=50)
-    df['rsi'] = ta.rsi(df['close'], length=14)
     macd = ta.macd(df['close'])
     df['MACD'] = macd['MACD_12_26_9']
     df['MACDs'] = macd['MACDs_12_26_9']
@@ -166,10 +182,12 @@ def analyze_symbol(symbol, timeframe='15m'):
     df['DI-'] = adx['DMN_14']
     df['ATR'] = ta.atr(df['high'], df['low'], df['close'])
 
+    # بررسی الگوهای کندل
     candle = df.iloc[-2]
     signal_type = detect_strong_candle(candle) or detect_engulfing(df[:-1])
     pattern = signal_type.replace("_", " ").title() if signal_type else "None"
 
+    # استخراج مقادیر آخرین داده‌ها
     rsi_val = df['rsi'].iloc[-2]
     adx_val = df['ADX'].iloc[-2]
     entry = df['close'].iloc[-2]
