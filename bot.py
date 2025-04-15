@@ -305,6 +305,68 @@ def monitor():
 
         time.sleep(CHECK_INTERVAL)
 
+def monitor_positions():
+    global tp1_count, tp2_count, sl_count, last_report_day, daily_signal_count, daily_hit_count
+    while True:
+        for symbol, pos in list(open_positions.items()):
+            try:
+                df = get_data('15m', symbol)
+                current_price = df['close'].iloc[-1]
+                direction = pos['direction']
+
+                if direction == 'Long':
+                    if current_price >= pos['tp2']:
+                        send_telegram_message(f"✅ *{symbol} TP2 Hit* - Full Target Reached. Position Closed.")
+                        tp2_count += 1
+                        del open_positions[symbol]
+                    elif current_price >= pos['tp1']:
+                        send_telegram_message(f"🎯 *{symbol} TP1 Hit* - Consider Partial Close.")
+                        tp1_count += 1
+                    elif current_price <= pos['sl']:
+                        send_telegram_message(f"❌ *{symbol} SL Hit* - Position Closed.")
+                        sl_count += 1
+                        del open_positions[symbol]
+
+                if direction == 'Short':
+                    if current_price <= pos['tp2']:
+                        send_telegram_message(f"✅ *{symbol} TP2 Hit* - Full Target Reached. Position Closed.")
+                        tp2_count += 1
+                        del open_positions[symbol]
+                    elif current_price <= pos['tp1']:
+                        send_telegram_message(f"🎯 *{symbol} TP1 Hit* - Consider Partial Close.")
+                        tp1_count += 1
+                    elif current_price >= pos['sl']:
+                        send_telegram_message(f"❌ *{symbol} SL Hit* - Position Closed.")
+                        sl_count += 1
+                        del open_positions[symbol]
+            except Exception as e:
+                logging.error(f"Monitor error for {symbol}: {e}")
+
+        now = datetime.utcnow()
+        tehran_hour = (now.hour + 3) % 24
+        tehran_min = now.minute
+        current_day = now.date()
+
+        if tehran_hour == 23 and tehran_min >= 55 and current_day != last_report_day:
+            total = daily_signal_count
+            winrate = round(((tp1_count + tp2_count) / total) * 100, 1) if total > 0 else 0.0
+            report = f"""📊 *Daily Performance Report*
+Total Signals: {total}
+🎯 TP1 Hit: {tp1_count}
+✅ TP2 Hit: {tp2_count}
+❌ SL Hit: {sl_count}
+📈 Estimated Winrate: {winrate}%"""
+            send_telegram_message(report)
+            last_report_day = current_day
+            daily_signal_count = 0
+            daily_hit_count = 0
+            tp1_count = 0
+            tp2_count = 0
+            sl_count = 0
+            send_telegram_message("😴 Bot going to sleep. See you tomorrow!")
+
+        time.sleep(MONITOR_INTERVAL)
+
 # شروع و اجرای برنامه
 if __name__ == '__main__':
     threading.Thread(target=monitor, daemon=True).start()
