@@ -63,9 +63,13 @@ def get_data(timeframe, symbol):
     res = requests.get(url, params=params, timeout=10)
     data = res.json()['Data']['Data']
     df = pd.DataFrame(data)
-    df['timestamp'] = pd.to_datetime(df['time'], unit='s')
-    df['volume'] = df['volumeto']
+    
+    # تغییرات: تبدیل 'time' به 'timestamp' و 'volumeto' به 'volume'
+    df['timestamp'] = pd.to_datetime(df['time'], unit='s')  # تبدیل 'time' به 'timestamp'
+    df['volume'] = df['volumeto']  # 'volumeto' به 'volume' تبدیل می‌شود
+    
     return df[['timestamp', 'open', 'high', 'low', 'close', 'volume']]
+
 
 def monitor_positions():
     global tp1_count, tp2_count, sl_count, last_report_day, daily_signal_count, daily_hit_count
