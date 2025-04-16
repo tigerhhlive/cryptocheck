@@ -14,7 +14,8 @@ CRYPTOCOMPARE_API_KEY = os.environ.get('CRYPTOCOMPARE_API_KEY')
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
 
-ADX_THRESHOLD = 20
+# تغییر آستانه ADX از 20 به 25 برای تشخیص روند قوی
+ADX_THRESHOLD = 25  
 ATR_PERIOD = 14
 ATR_MULTIPLIER_SL = 1.2
 TP1_MULTIPLIER = 1.8
@@ -69,7 +70,7 @@ def get_data(timeframe, symbol):
             return None
         df = pd.DataFrame(data)
         
-        # اصلاحات برای داده‌های NaN و تبدیل صحیح نام‌ها
+        # اصلاح داده‌های NaN
         if df.isnull().values.any():
             logging.warning("⚠️ Data contains NaN values, cleaning...")
             df = df.dropna()
@@ -124,7 +125,6 @@ def analyze_symbol(symbol, timeframe='15m', fast_check=False):
         logging.info(f"{symbol}: Not enough data")
         return None, "Data too short"
 
-    # محاسبه اندیکاتورها
     df['EMA20'] = ta.ema(df['close'], length=20)
     df['EMA50'] = ta.ema(df['close'], length=50)
     df['rsi'] = ta.rsi(df['close'], length=14)
@@ -138,12 +138,13 @@ def analyze_symbol(symbol, timeframe='15m', fast_check=False):
 
     adx = ta.adx(df['high'], df['low'], df['close'])
     if adx is None or not isinstance(adx, pd.DataFrame):
+        logging.info(f"{symbol}: ADX calculation failed.")
         return None, "ADX calculation failed"
+    # تغییر شرط بررسی ADX به تنها مقدار سطر آخر
     if 'ADX_14' not in adx.columns or pd.isna(adx['ADX_14'].iloc[-1]):
         logging.info(f"{symbol}: ADX calculation failed.")
         return None, "ADX calculation failed"
     df['ADX'] = adx['ADX_14']
-
 
     atr_series = ta.atr(df['high'], df['low'], df['close'])
     if atr_series is None or atr_series.isnull().all():
@@ -151,23 +152,23 @@ def analyze_symbol(symbol, timeframe='15m', fast_check=False):
         return None, "ATR calculation failed"
     df['ATR'] = atr_series
 
-    # اضافه کردن لاگ جهت نمایش مقادیر اندیکاتورها از ردیف قبل از آخر
+    # ادامه تحلیل‌ها و سیگنال‌ها
+    candle = df.iloc[-2]
+    confirm_candle = df.iloc[-1]
+    signal_type = detect_strong_candle(candle) or detect_engulfing(df)
+    pattern = signal_type.replace("_", " ").title() if signal_type else "None"
+
     rsi_val = df['rsi'].iloc[-2]
     macd_val = df['MACD'].iloc[-2]
     macds_val = df['MACDs'].iloc[-2]
     adx_val = df['ADX'].iloc[-2]
     atr_val = df['ATR'].iloc[-2]
     entry = df['close'].iloc[-2]
+    
     logging.info(f"{symbol}: Entry={entry}, RSI={rsi_val}, MACD={macd_val}, MACDs={macds_val}, ADX={adx_val}, ATR={atr_val}")
-
-    # تحلیل شمع‌ها
-    candle = df.iloc[-2]
-    confirm_candle = df.iloc[-1]
-    signal_type = detect_strong_candle(candle) or detect_engulfing(df)
-    pattern = signal_type.replace("_", " ").title() if signal_type else "None"
     logging.info(f"{symbol}: Detected signal type: {signal_type}, Pattern: {pattern}")
 
-    # اصلاح ATR در صورت نیاز
+    # اصلاح ATR
     atr = max(atr_val, entry * MIN_PERCENT_RISK, MIN_ATR)
 
     above_ema = candle['close'] > candle['EMA20'] and candle['EMA20'] > candle['EMA50']
@@ -186,7 +187,8 @@ def analyze_symbol(symbol, timeframe='15m', fast_check=False):
     logging.info(f"{symbol}: Confirmations: {confirmations} (Confidence: {len(confirmations)})")
 
     confidence = len(confirmations)
-    direction = 'Long' if 'bullish' in str(signal_type) and confidence >= 3 else 'Short' if 'bearish' in str(signal_type) and confidence >= 3 else None
+    # تغییر شرط از 3 به 2 تاییدیه برای صدور سیگنال
+    direction = 'Long' if 'bullish' in str(signal_type) and confidence >= 2 else 'Short' if 'bearish' in str(signal_type) and confidence >= 2 else None
 
     if direction == 'Long' and confirm_candle['close'] <= confirm_candle['open']:
         logging.info(f"{symbol}: Confirmation candle failed for Long signal.")
@@ -278,7 +280,6 @@ def analyze_symbol(symbol, timeframe='15m', fast_check=False):
         }, None
 
     return None, None
-
 
 def analyze_and_alert(sym):
     try:
