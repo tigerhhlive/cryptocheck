@@ -120,42 +120,52 @@ def analyze_symbol(symbol, timeframe='15m', fast_check=False):
     else:
         df = get_data(timeframe, symbol)
 
-    if len(df) < 15:
+    if df is None or len(df) < 15:
+        logging.info(f"{symbol}: Not enough data")
         return None, "Data too short"
 
+    # محاسبه اندیکاتورها
     df['EMA20'] = ta.ema(df['close'], length=20)
     df['EMA50'] = ta.ema(df['close'], length=50)
     df['rsi'] = ta.rsi(df['close'], length=14)
     macd = ta.macd(df['close'])
     if macd is None or not isinstance(macd, pd.DataFrame) or macd.isnull().all().all():
+        logging.info(f"{symbol}: MACD calculation failed.")
         return None, "MACD calculation failed"
 
     df['MACD'] = macd['MACD_12_26_9']
     df['MACDs'] = macd['MACDs_12_26_9']
 
     adx = ta.adx(df['high'], df['low'], df['close'])
-    if adx is None or not isinstance(adx, pd.DataFrame):
+    if adx is None or not isinstance(adx, pd.DataFrame) or 'ADX_14' not in adx.columns or adx['ADX_14'].isnull().any():
+        logging.info(f"{symbol}: ADX calculation failed.")
         return None, "ADX calculation failed"
-    if 'ADX_14' not in adx.columns or adx['ADX_14'].isnull().any():
-        return None, "ADX_14 column is missing or contains null values"
     df['ADX'] = adx['ADX_14']
 
     atr_series = ta.atr(df['high'], df['low'], df['close'])
     if atr_series is None or atr_series.isnull().all():
+        logging.info(f"{symbol}: ATR calculation failed.")
         return None, "ATR calculation failed"
     df['ATR'] = atr_series
 
-    # ادامه تحلیل‌ها و سیگنال‌ها...
+    # اضافه کردن لاگ جهت نمایش مقادیر اندیکاتورها از ردیف قبل از آخر
+    rsi_val = df['rsi'].iloc[-2]
+    macd_val = df['MACD'].iloc[-2]
+    macds_val = df['MACDs'].iloc[-2]
+    adx_val = df['ADX'].iloc[-2]
+    atr_val = df['ATR'].iloc[-2]
+    entry = df['close'].iloc[-2]
+    logging.info(f"{symbol}: Entry={entry}, RSI={rsi_val}, MACD={macd_val}, MACDs={macds_val}, ADX={adx_val}, ATR={atr_val}")
+
+    # تحلیل شمع‌ها
     candle = df.iloc[-2]
     confirm_candle = df.iloc[-1]
     signal_type = detect_strong_candle(candle) or detect_engulfing(df)
     pattern = signal_type.replace("_", " ").title() if signal_type else "None"
+    logging.info(f"{symbol}: Detected signal type: {signal_type}, Pattern: {pattern}")
 
-    rsi_val = df['rsi'].iloc[-2]
-    adx_val = df['ADX'].iloc[-2]
-    entry = df['close'].iloc[-2]
-    atr = df['ATR'].iloc[-2]
-    atr = max(atr, entry * MIN_PERCENT_RISK, MIN_ATR)
+    # اصلاح ATR در صورت نیاز
+    atr = max(atr_val, entry * MIN_PERCENT_RISK, MIN_ATR)
 
     above_ema = candle['close'] > candle['EMA20'] and candle['EMA20'] > candle['EMA50']
     below_ema = candle['close'] < candle['EMA20'] and candle['EMA20'] < candle['EMA50']
@@ -163,21 +173,23 @@ def analyze_symbol(symbol, timeframe='15m', fast_check=False):
     confirmations = []
     if (signal_type and 'bullish' in signal_type and rsi_val >= 50) or (signal_type and 'bearish' in signal_type and rsi_val <= 50):
         confirmations.append("RSI")
-    if ((df['MACD'].iloc[-2] > df['MACDs'].iloc[-2]) if ('bullish' in str(signal_type)) 
-            else (df['MACD'].iloc[-2] < df['MACDs'].iloc[-2])):  # بررسی MACD
+    if ((macd_val > macds_val) if ('bullish' in str(signal_type)) else (macd_val < macds_val)):
         confirmations.append("MACD")
-    if adx_val > ADX_THRESHOLD:  # بررسی ADX
+    if adx_val > ADX_THRESHOLD:
         confirmations.append("ADX")
-    if ('bullish' in str(signal_type) and above_ema) or ('bearish' in str(signal_type) and below_ema):  # بررسی EMA
+    if ('bullish' in str(signal_type) and above_ema) or ('bearish' in str(signal_type) and below_ema):
         confirmations.append("EMA")
 
+    logging.info(f"{symbol}: Confirmations: {confirmations} (Confidence: {len(confirmations)})")
+
     confidence = len(confirmations)
-    direction = 'Long' if 'bullish' in str(signal_type) and confidence >= 3 \
-                else 'Short' if 'bearish' in str(signal_type) and confidence >= 3 else None
+    direction = 'Long' if 'bullish' in str(signal_type) and confidence >= 3 else 'Short' if 'bearish' in str(signal_type) and confidence >= 3 else None
 
     if direction == 'Long' and confirm_candle['close'] <= confirm_candle['open']:
+        logging.info(f"{symbol}: Confirmation candle failed for Long signal.")
         return None, "Confirmation candle failed"
     if direction == 'Short' and confirm_candle['close'] >= confirm_candle['open']:
+        logging.info(f"{symbol}: Confirmation candle failed for Short signal.")
         return None, "Confirmation candle failed"
 
     support_zone = df['low'].rolling(window=10).min().iloc[-1]
@@ -186,8 +198,10 @@ def analyze_symbol(symbol, timeframe='15m', fast_check=False):
     is_near_resistance = entry >= resistance_zone * 0.98
 
     if direction == 'Long' and is_near_resistance:
+        logging.info(f"{symbol}: Price too close to resistance for Long signal.")
         return None, "Too close to resistance"
     if direction == 'Short' and is_near_support:
+        logging.info(f"{symbol}: Price too close to support for Short signal.")
         return None, "Too close to support"
 
     prev_high = df['high'].iloc[-5:-2].max()
@@ -196,13 +210,17 @@ def analyze_symbol(symbol, timeframe='15m', fast_check=False):
     bos_short = direction == 'Short' and candle['low'] < prev_low
 
     if direction == 'Long' and not bos_long:
+        logging.info(f"{symbol}: No bullish structure break.")
         return None, "No bullish structure break"
     if direction == 'Short' and not bos_short:
+        logging.info(f"{symbol}: No bearish structure break.")
         return None, "No bearish structure break"
 
     if direction is None and is_near_support and candle['close'] > candle['open']:
+        logging.info(f"{symbol}: Only candle condition met.")
         return None, "Candle Only"
     if direction is None and is_near_resistance and candle['close'] < candle['open']:
+        logging.info(f"{symbol}: Only candle condition met.")
         return None, "Candle Only"
 
     if direction and not check_cooldown(symbol, direction):
@@ -212,19 +230,20 @@ def analyze_symbol(symbol, timeframe='15m', fast_check=False):
     if direction:
         daily_signal_count += 1
 
-        resistance = df['high'].rolling(window=10).max().iloc[-2]
-        support = df['low'].rolling(window=10).min().iloc[-2]
+        resistance_calc = df['high'].rolling(window=10).max().iloc[-2]
+        support_calc = df['low'].rolling(window=10).min().iloc[-2]
         sl = tp1 = tp2 = None
 
         if direction == 'Long':
             sl = entry - atr * ATR_MULTIPLIER_SL
-            tp1 = min(entry + atr * TP1_MULTIPLIER, resistance)
+            tp1 = min(entry + atr * TP1_MULTIPLIER, resistance_calc)
             tp2 = tp1 + (tp1 - entry) * 1.2
         elif direction == 'Short':
             sl = entry + atr * ATR_MULTIPLIER_SL
-            tp1 = max(entry - atr * TP1_MULTIPLIER, support)
+            tp1 = max(entry - atr * TP1_MULTIPLIER, support_calc)
             tp2 = tp1 - (entry - tp1) * 1.2
         else:
+            logging.info(f"{symbol}: Invalid direction encountered.")
             return None, "Invalid direction"
 
         rr_ratio = abs(tp1 - entry) / abs(entry - sl)
@@ -241,7 +260,7 @@ def analyze_symbol(symbol, timeframe='15m', fast_check=False):
 *Target 2:* `{tp2:.6f}`
 *Leverage (est.):* `{rr_ratio:.2f}X`
 *Signal Strength:* {confidence_stars}"""
-
+        logging.info(f"{symbol}: Signal ready to be sent. Message: {message}")
         return {
             "symbol": symbol,
             "direction": direction,
@@ -256,6 +275,7 @@ def analyze_symbol(symbol, timeframe='15m', fast_check=False):
         }, None
 
     return None, None
+
 
 def analyze_and_alert(sym):
     try:
