@@ -136,7 +136,7 @@ def analyze_symbol(symbol, timeframe='15m', fast_check=False):
     df['MACD'] = macd['MACD_12_26_9']
     df['MACDs'] = macd['MACDs_12_26_9']
 
-     adx = ta.adx(df['high'], df['low'], df['close'])
+    adx = ta.adx(df['high'], df['low'], df['close'])
     if adx is None or not isinstance(adx, pd.DataFrame):
         return None, "ADX calculation failed"
     if 'ADX_14' not in adx.columns or pd.isna(adx['ADX_14'].iloc[-1]):
