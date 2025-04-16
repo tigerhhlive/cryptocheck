@@ -60,23 +60,12 @@ def get_data(timeframe, symbol):
         'aggregate': aggregate,
         'api_key': CRYPTOCOMPARE_API_KEY
     }
-    try:
-        res = requests.get(url, params=params, timeout=10)
-        json_data = res.json()
-        data = json_data.get("Data", {}).get("Data", [])
-        if not data or not isinstance(data, list):
-            logging.warning(f"⚠️ No valid data received for {symbol} in {timeframe}. Raw: {json_data}")
-            return None
-        df = pd.DataFrame(data)
-        if df.empty or df.isnull().all().any():
-            logging.warning(f"⚠️ DataFrame is empty or all null for {symbol} in {timeframe}")
-            return None
-        df['timestamp'] = pd.to_datetime(df['time'], unit='s')
-        df['volume'] = df['volumeto']
-        return df[['timestamp', 'open', 'high', 'low', 'close', 'volume']]
-    except Exception as e:
-        logging.error(f"❌ Error fetching data for {symbol}: {e}")
-        return None
+    res = requests.get(url, params=params, timeout=10)
+    data = res.json()['Data']['Data']
+    df = pd.DataFrame(data)
+    df['timestamp'] = pd.to_datetime(df['time'], unit='s')
+    df['volume'] = df['volumeto']
+    return df[['timestamp', 'open', 'high', 'low', 'close', 'volume']]
 
 def monitor_positions():
     global tp1_count, tp2_count, sl_count, last_report_day, daily_signal_count, daily_hit_count
@@ -140,6 +129,18 @@ Total Signals: {total}
 
         time.sleep(MONITOR_INTERVAL)
 
+def analyze_symbol_mtf(symbol):
+    msg_5m, _ = analyze_symbol(symbol, '5m')
+    msg_15m, _ = analyze_symbol(symbol, '15m')
+    if msg_5m and msg_15m:
+        if ("BUY" in msg_5m and "BUY" in msg_15m) or ("SELL" in msg_5m and "SELL" in msg_15m):
+            return msg_15m, None
+    elif msg_15m:
+        confirmations_count = msg_15m.count("🔥")
+        if confirmations_count >= 3:
+            return msg_15m + "\n⚠️ *Strong 15m signal without 5m confirmation.*", None
+    return None, None
+
 def detect_strong_candle(row, threshold=0.7):
     body = abs(row['close'] - row['open'])
     candle_range = row['high'] - row['low']
@@ -151,10 +152,10 @@ def detect_strong_candle(row, threshold=0.7):
     return None
 
 def detect_engulfing(df):
-    if len(df) < 3:
+    if len(df) < 2:
         return None
-    prev = df.iloc[-3]
-    curr = df.iloc[-2]
+    prev = df.iloc[-2]
+    curr = df.iloc[-1]
     if prev['close'] < prev['open'] and curr['close'] > curr['open'] and curr['close'] > prev['open'] and curr['open'] < prev['close']:
         return 'bullish_engulfing'
     if prev['close'] > prev['open'] and curr['close'] < curr['open'] and curr['open'] > prev['close'] and curr['close'] < prev['open']:
@@ -170,42 +171,27 @@ def check_cooldown(symbol, direction):
     last_signals[key] = now
     return True
 
-def analyze_symbol(symbol, timeframe='15m', fast_check=False):
+def analyze_symbol(symbol, timeframe='15m'):
     global daily_signal_count
 
-    if fast_check:
-        df = get_data(timeframe, symbol).tail(15)
-    else:
-        df = get_data(timeframe, symbol)
-
-    if len(df) < 15:
-        return None, "Data too short"
+    df = get_data(timeframe, symbol)
+    if len(df) < 30:
+        return None, None
 
     df['EMA20'] = ta.ema(df['close'], length=20)
     df['EMA50'] = ta.ema(df['close'], length=50)
     df['rsi'] = ta.rsi(df['close'], length=14)
     macd = ta.macd(df['close'])
-    if macd is None or not isinstance(macd, pd.DataFrame) or macd.isnull().all().all():
-        return None, "MACD calculation failed"
-
     df['MACD'] = macd['MACD_12_26_9']
     df['MACDs'] = macd['MACDs_12_26_9']
-
     adx = ta.adx(df['high'], df['low'], df['close'])
-    if adx is None or not isinstance(adx, pd.DataFrame):
-        return None, "ADX calculation failed"
-    if 'ADX_14' not in adx.columns or adx['ADX_14'].isnull().any():
-        return None, "ADX_14 column is missing or contains null values"
     df['ADX'] = adx['ADX_14']
-
-    atr_series = ta.atr(df['high'], df['low'], df['close'])
-    if atr_series is None or atr_series.isnull().all():
-        return None, "ATR calculation failed"
-    df['ATR'] = atr_series
+    df['DI+'] = adx['DMP_14']
+    df['DI-'] = adx['DMN_14']
+    df['ATR'] = ta.atr(df['high'], df['low'], df['close'])
 
     candle = df.iloc[-2]
-    confirm_candle = df.iloc[-1]
-    signal_type = detect_strong_candle(candle) or detect_engulfing(df)
+    signal_type = detect_strong_candle(candle) or detect_engulfing(df[:-1])
     pattern = signal_type.replace("_", " ").title() if signal_type else "None"
 
     rsi_val = df['rsi'].iloc[-2]
@@ -220,8 +206,7 @@ def analyze_symbol(symbol, timeframe='15m', fast_check=False):
     confirmations = []
     if (signal_type and 'bullish' in signal_type and rsi_val >= 50) or (signal_type and 'bearish' in signal_type and rsi_val <= 50):
         confirmations.append("RSI")
-    if ((df['MACD'].iloc[-2] > df['MACDs'].iloc[-2]) if ('bullish' in str(signal_type)) 
-            else (df['MACD'].iloc[-2] < df['MACDs'].iloc[-2])):
+    if (df['MACD'].iloc[-2] > df['MACDs'].iloc[-2]) if 'bullish' in str(signal_type) else (df['MACD'].iloc[-2] < df['MACDs'].iloc[-2]):
         confirmations.append("MACD")
     if adx_val > ADX_THRESHOLD:
         confirmations.append("ADX")
@@ -229,38 +214,7 @@ def analyze_symbol(symbol, timeframe='15m', fast_check=False):
         confirmations.append("EMA")
 
     confidence = len(confirmations)
-    direction = 'Long' if 'bullish' in str(signal_type) and confidence >= 3 \
-                else 'Short' if 'bearish' in str(signal_type) and confidence >= 3 else None
-
-    if direction == 'Long' and confirm_candle['close'] <= confirm_candle['open']:
-        return None, "Confirmation candle failed"
-    if direction == 'Short' and confirm_candle['close'] >= confirm_candle['open']:
-        return None, "Confirmation candle failed"
-
-    support_zone = df['low'].rolling(window=10).min().iloc[-1]
-    resistance_zone = df['high'].rolling(window=10).max().iloc[-1]
-    is_near_support = entry <= support_zone * 1.02
-    is_near_resistance = entry >= resistance_zone * 0.98
-
-    if direction == 'Long' and is_near_resistance:
-        return None, "Too close to resistance"
-    if direction == 'Short' and is_near_support:
-        return None, "Too close to support"
-
-    prev_high = df['high'].iloc[-5:-2].max()
-    prev_low = df['low'].iloc[-5:-2].min()
-    bos_long = direction == 'Long' and candle['high'] > prev_high
-    bos_short = direction == 'Short' and candle['low'] < prev_low
-
-    if direction == 'Long' and not bos_long:
-        return None, "No bullish structure break"
-    if direction == 'Short' and not bos_short:
-        return None, "No bearish structure break"
-
-    if direction is None and is_near_support and candle['close'] > candle['open']:
-        return None, "Candle Only"
-    if direction is None and is_near_resistance and candle['close'] < candle['open']:
-        return None, "Candle Only"
+    direction = 'Long' if 'bullish' in str(signal_type) and confidence >= 3 else 'Short' if 'bearish' in str(signal_type) and confidence >= 3 else None
 
     if direction and not check_cooldown(symbol, direction):
         logging.info(f"{symbol} - DUPLICATE SIGNAL - Skipped due to cooldown")
@@ -268,30 +222,22 @@ def analyze_symbol(symbol, timeframe='15m', fast_check=False):
 
     if direction:
         daily_signal_count += 1
-
-        resistance = df['high'].rolling(window=10).max().iloc[-2]
-        support = df['low'].rolling(window=10).min().iloc[-2]
-        sl = tp1 = tp2 = None
-
-        if direction == 'Long':
-            sl = entry - atr * ATR_MULTIPLIER_SL
-            tp1 = min(entry + atr * TP1_MULTIPLIER, resistance)
-            tp2 = tp1 + (tp1 - entry) * 1.2
-        elif direction == 'Short':
-            sl = entry + atr * ATR_MULTIPLIER_SL
-            tp1 = max(entry - atr * TP1_MULTIPLIER, support)
-            tp2 = tp1 - (entry - tp1) * 1.2
-        else:
-            return None, "Invalid direction"
-
+        sl = entry - atr * ATR_MULTIPLIER_SL if direction == 'Long' else entry + atr * ATR_MULTIPLIER_SL
+        tp1 = entry + atr * TP1_MULTIPLIER if direction == 'Long' else entry - atr * TP1_MULTIPLIER
+        tp2 = entry + atr * TP2_MULTIPLIER if direction == 'Long' else entry - atr * TP2_MULTIPLIER
         rr_ratio = abs(tp1 - entry) / abs(entry - sl)
+        TP1_MULT = max(1.5, round(rr_ratio * 1.1, 1))
+        TP2_MULT = round(TP1_MULT * 1.5, 1)
+        tp1 = entry + atr * TP1_MULT if direction == 'Long' else entry - atr * TP1_MULT
+        tp2 = entry + atr * TP2_MULT if direction == 'Long' else entry - atr * TP2_MULT
+
         confidence_stars = "🔥" * confidence
 
         message = f"""🚨 *AI Signal Alert*
 *Symbol:* `{symbol}`
 *Signal:* {'🟢 BUY MARKET' if direction == 'Long' else '🔴 SELL MARKET'}
 *Pattern:* {pattern}
-*Confirmed by:* {', '.join(confirmations) if confirmations else 'None'}
+*Confirmed by:* {", ".join(confirmations) if confirmations else 'None'}
 *Entry:* `{entry:.6f}`
 *Stop Loss:* `{sl:.6f}`
 *Target 1:* `{tp1:.6f}`
@@ -299,74 +245,27 @@ def analyze_symbol(symbol, timeframe='15m', fast_check=False):
 *Leverage (est.):* `{rr_ratio:.2f}X`
 *Signal Strength:* {confidence_stars}"""
 
-        return {
-            "symbol": symbol,
-            "direction": direction,
-            "entry": entry,
-            "sl": sl,
-            "tp1": tp1,
-            "tp2": tp2,
-            "confidence": confidence,
-            "pattern": pattern,
-            "confirmations": confirmations,
-            "message": message
-        }, None
+        open_positions[symbol] = {
+            'direction': direction,
+            'sl': sl,
+            'tp1': tp1,
+            'tp2': tp2
+        }
 
+        return message, None
+
+    logging.info(f"{symbol} - NO SIGNAL | Confirmations: {len(confirmations)}/4")
     return None, None
 
 def analyze_symbol_mtf(symbol):
-    try:
-        tf5_result = analyze_symbol(symbol, '5m', fast_check=True)
-        tf15_result = analyze_symbol(symbol, '15m')
-
-        tf5_data = None
-        if tf5_result and isinstance(tf5_result, tuple) and len(tf5_result) >= 1:
-            part = tf5_result[0]
-            if isinstance(part, dict):
-                tf5_data = part
-
-        tf15_data = None
-        if tf15_result and isinstance(tf15_result, tuple) and len(tf15_result) >= 1:
-            part = tf15_result[0]
-            if isinstance(part, dict):
-                tf15_data = part
-
-        if not tf15_data or not isinstance(tf15_data, dict):
-            logging.warning(f"⚠️ Invalid or no 15m data for {symbol}")
-            return None, None
-
-        dir_15 = tf15_data.get("direction", None)
-        conf_15 = tf15_data.get("confidence", 0)
-        msg_15 = tf15_data.get("message", "")
-
-        dir_5 = tf5_data.get("direction", None) if tf5_data else None
-        conf_5 = tf5_data.get("confidence", 0) if tf5_data else 0
-
-        if dir_15 == dir_5 and conf_15 >= 3 and conf_5 >= 2:
-            return msg_15, None
-
-        if conf_15 >= 4:
-            return msg_15 + "\n⚠️ Strong 15m signal without 5m confirmation.", None
-
-        return None, None
-
-    except Exception as e:
-        import traceback
-        tb = traceback.format_exc()
-        logging.error(f"❌ Error analyzing {symbol} (MTF): {type(e).__name__} - {e}\nTraceback:\n{tb}")
-        return None, None
-
-def analyze_and_alert(sym):
-    try:
-        logging.info(f"🟡 Starting analysis for {sym}")
-        msg, _ = analyze_symbol_mtf(sym)
-        if msg:
-            send_telegram_message(msg)
-            global daily_hit_count
-            daily_hit_count += 1
-        logging.info(f"✅ Done analyzing {sym}")
-    except Exception as e:
-        logging.error(f"❌ Error analyzing {sym}: {e}")
+    msg_5m, _ = analyze_symbol(symbol, '5m')
+    msg_15m, _ = analyze_symbol(symbol, '15m')
+    if msg_5m and msg_15m:
+        if ("BUY" in msg_5m and "BUY" in msg_15m) or ("SELL" in msg_5m and "SELL" in msg_15m):
+            return msg_15m, None
+    elif msg_15m and ("🔥🔥🔥" in msg_15m):
+        return msg_15m + "\n⚠️ *Strong 15m signal without 5m confirmation.*", None
+    return None, None
 
 def monitor():
     global daily_signal_count, daily_hit_count, last_report_day
@@ -374,7 +273,7 @@ def monitor():
     symbols = [
         "BTCUSDT", "ETHUSDT", "DOGEUSDT", "BNBUSDT", "XRPUSDT",
         "RENDERUSDT", "TRUMPUSDT", "FARTCOINUSDT", "XLMUSDT",
-        "SHIBUSDT", "ADAUSDT", "NOTUSDT", "PROMUSDT", "PENDLEUSDT"
+        "SHIBUSDT", "ADAUSDT", "NOTUSDT", "PROMUSDT"
     ]
     last_heartbeat = 0
 
@@ -393,14 +292,14 @@ def monitor():
             send_telegram_message("🤖 Bot is alive and scanning signals.")
             last_heartbeat = time.time()
 
-        threads = []
         for sym in symbols:
-            t = threading.Thread(target=analyze_and_alert, args=(sym,))
-            t.start()
-            threads.append(t)
-
-        for t in threads:
-            t.join()
+            try:
+                msg, _ = analyze_symbol_mtf(sym)
+                if msg:
+                    send_telegram_message(msg)
+                    daily_hit_count += 1
+            except Exception as e:
+                logging.error(f"Error analyzing {sym}: {e}")
 
         time.sleep(CHECK_INTERVAL)
 
