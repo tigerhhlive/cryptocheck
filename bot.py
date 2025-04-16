@@ -14,8 +14,8 @@ CRYPTOCOMPARE_API_KEY = os.environ.get('CRYPTOCOMPARE_API_KEY')
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
 
-# تغییر آستانه ADX از 20 به 25 برای تشخیص روند قوی
-ADX_THRESHOLD = 25  
+# تنظیم آستانه‌های فنی
+ADX_THRESHOLD = 20  
 ATR_PERIOD = 14
 ATR_MULTIPLIER_SL = 1.2
 TP1_MULTIPLIER = 1.8
@@ -69,15 +69,11 @@ def get_data(timeframe, symbol):
             logging.warning(f"⚠️ No valid data received for {symbol} in {timeframe}. Raw: {json_data}")
             return None
         df = pd.DataFrame(data)
-        
-        # اصلاح داده‌های NaN
         if df.isnull().values.any():
             logging.warning("⚠️ Data contains NaN values, cleaning...")
             df = df.dropna()
-        
         df['timestamp'] = pd.to_datetime(df['time'], unit='s')
         df['volume'] = df['volumeto']  # اصلاح نام 'volumeto' به 'volume'
-        
         return df[['timestamp', 'open', 'high', 'low', 'close', 'volume']]
     except Exception as e:
         logging.error(f"❌ Error fetching data for {symbol}: {e}")
@@ -115,12 +111,10 @@ def check_cooldown(symbol, direction):
 
 def analyze_symbol(symbol, timeframe='15m', fast_check=False):
     global daily_signal_count
-
     if fast_check:
         df = get_data(timeframe, symbol).tail(15)
     else:
         df = get_data(timeframe, symbol)
-
     if df is None or len(df) < 15:
         logging.info(f"{symbol}: Not enough data")
         return None, "Data too short"
@@ -132,7 +126,6 @@ def analyze_symbol(symbol, timeframe='15m', fast_check=False):
     if macd is None or not isinstance(macd, pd.DataFrame) or macd.isnull().all().all():
         logging.info(f"{symbol}: MACD calculation failed.")
         return None, "MACD calculation failed"
-
     df['MACD'] = macd['MACD_12_26_9']
     df['MACDs'] = macd['MACDs_12_26_9']
 
@@ -140,7 +133,6 @@ def analyze_symbol(symbol, timeframe='15m', fast_check=False):
     if adx is None or not isinstance(adx, pd.DataFrame):
         logging.info(f"{symbol}: ADX calculation failed.")
         return None, "ADX calculation failed"
-    # تغییر شرط بررسی ADX به تنها مقدار سطر آخر
     if 'ADX_14' not in adx.columns or pd.isna(adx['ADX_14'].iloc[-1]):
         logging.info(f"{symbol}: ADX calculation failed.")
         return None, "ADX calculation failed"
@@ -152,7 +144,7 @@ def analyze_symbol(symbol, timeframe='15m', fast_check=False):
         return None, "ATR calculation failed"
     df['ATR'] = atr_series
 
-    # ادامه تحلیل‌ها و سیگنال‌ها
+    # تحلیل شمع‌ها
     candle = df.iloc[-2]
     confirm_candle = df.iloc[-1]
     signal_type = detect_strong_candle(candle) or detect_engulfing(df)
@@ -164,7 +156,6 @@ def analyze_symbol(symbol, timeframe='15m', fast_check=False):
     adx_val = df['ADX'].iloc[-2]
     atr_val = df['ATR'].iloc[-2]
     entry = df['close'].iloc[-2]
-    
     logging.info(f"{symbol}: Entry={entry}, RSI={rsi_val}, MACD={macd_val}, MACDs={macds_val}, ADX={adx_val}, ATR={atr_val}")
     logging.info(f"{symbol}: Detected signal type: {signal_type}, Pattern: {pattern}")
 
@@ -187,7 +178,7 @@ def analyze_symbol(symbol, timeframe='15m', fast_check=False):
     logging.info(f"{symbol}: Confirmations: {confirmations} (Confidence: {len(confirmations)})")
 
     confidence = len(confirmations)
-    # تغییر شرط از 3 به 2 تاییدیه برای صدور سیگنال
+    # شرط تایید: حداقل 2 تاییدیه
     direction = 'Long' if 'bullish' in str(signal_type) and confidence >= 2 else 'Short' if 'bearish' in str(signal_type) and confidence >= 2 else None
 
     if direction == 'Long' and confirm_candle['close'] <= confirm_candle['open']:
@@ -197,16 +188,18 @@ def analyze_symbol(symbol, timeframe='15m', fast_check=False):
         logging.info(f"{symbol}: Confirmation candle failed for Short signal.")
         return None, "Confirmation candle failed"
 
-    support_zone = df['low'].rolling(window=10).min().iloc[-1]
+    # محاسبه مناطق حمایت و مقاومت به‌صورت نسبی
     resistance_zone = df['high'].rolling(window=10).max().iloc[-1]
-    is_near_support = entry <= support_zone * 1.02
-    is_near_resistance = entry >= resistance_zone * 0.98
+    support_zone = df['low'].rolling(window=10).min().iloc[-1]
+    # بررسی اختلاف نسبی بین قیمت ورود و سطح حمایت/مقاومت
+    ratio_resistance = (resistance_zone - entry) / entry
+    ratio_support = (entry - support_zone) / entry
 
-    if direction == 'Long' and is_near_resistance:
-        logging.info(f"{symbol}: Price too close to resistance for Long signal.")
+    if direction == 'Long' and ratio_resistance < 0.03:
+        logging.info(f"{symbol}: Price too close to resistance for Long signal. (ratio: {ratio_resistance:.2f})")
         return None, "Too close to resistance"
-    if direction == 'Short' and is_near_support:
-        logging.info(f"{symbol}: Price too close to support for Short signal.")
+    if direction == 'Short' and ratio_support < 0.03:
+        logging.info(f"{symbol}: Price too close to support for Short signal. (ratio: {ratio_support:.2f})")
         return None, "Too close to support"
 
     prev_high = df['high'].iloc[-5:-2].max()
@@ -221,10 +214,7 @@ def analyze_symbol(symbol, timeframe='15m', fast_check=False):
         logging.info(f"{symbol}: No bearish structure break.")
         return None, "No bearish structure break"
 
-    if direction is None and is_near_support and candle['close'] > candle['open']:
-        logging.info(f"{symbol}: Only candle condition met.")
-        return None, "Candle Only"
-    if direction is None and is_near_resistance and candle['close'] < candle['open']:
+    if direction is None and ( (entry - support_zone)/entry < 0.03 if candle['close'] > candle['open'] else (resistance_zone - entry)/entry < 0.03 ):
         logging.info(f"{symbol}: Only candle condition met.")
         return None, "Candle Only"
 
@@ -234,11 +224,9 @@ def analyze_symbol(symbol, timeframe='15m', fast_check=False):
 
     if direction:
         daily_signal_count += 1
-
         resistance_calc = df['high'].rolling(window=10).max().iloc[-2]
         support_calc = df['low'].rolling(window=10).min().iloc[-2]
         sl = tp1 = tp2 = None
-
         if direction == 'Long':
             sl = entry - atr * ATR_MULTIPLIER_SL
             tp1 = min(entry + atr * TP1_MULTIPLIER, resistance_calc)
@@ -253,7 +241,6 @@ def analyze_symbol(symbol, timeframe='15m', fast_check=False):
 
         rr_ratio = abs(tp1 - entry) / abs(entry - sl)
         confidence_stars = "🔥" * confidence
-
         message = f"""🚨 *AI Signal Alert*
 *Symbol:* `{symbol}`
 *Signal:* {'🟢 BUY MARKET' if direction == 'Long' else '🔴 SELL MARKET'}
@@ -278,7 +265,6 @@ def analyze_symbol(symbol, timeframe='15m', fast_check=False):
             "confirmations": confirmations,
             "message": message
         }, None
-
     return None, None
 
 def analyze_and_alert(sym):
@@ -295,38 +281,31 @@ def analyze_and_alert(sym):
 
 def monitor():
     global daily_signal_count, daily_hit_count, last_report_day
-
     symbols = [
         "BTCUSDT", "ETHUSDT", "DOGEUSDT", "BNBUSDT", "XRPUSDT",
         "RENDERUSDT", "TRUMPUSDT", "FARTCOINUSDT", "XLMUSDT",
         "SHIBUSDT", "ADAUSDT", "NOTUSDT", "PROMUSDT", "PENDLEUSDT"
     ]
     last_heartbeat = 0
-
     while True:
         now = datetime.utcnow()
         tehran_hour = (now.hour + 3) % 24
         tehran_min = now.minute
         current_day = now.date()
-
         if SLEEP_HOURS[0] <= tehran_hour < SLEEP_HOURS[1]:
             logging.info("Sleeping hours")
             time.sleep(60)
             continue
-
         if time.time() - last_heartbeat > HEARTBEAT_INTERVAL:
             send_telegram_message("🤖 Bot is alive and scanning signals.")
             last_heartbeat = time.time()
-
         threads = []
         for sym in symbols:
             t = threading.Thread(target=analyze_and_alert, args=(sym,))
             t.start()
             threads.append(t)
-
         for t in threads:
             t.join()
-
         time.sleep(CHECK_INTERVAL)
 
 def monitor_positions():
@@ -337,7 +316,6 @@ def monitor_positions():
                 df = get_data('15m', symbol)
                 current_price = df['close'].iloc[-1]
                 direction = pos['direction']
-
                 if direction == 'Long':
                     if current_price >= pos['tp2']:
                         send_telegram_message(f"✅ *{symbol} TP2 Hit* - Full Target Reached. Position Closed.")
@@ -350,7 +328,6 @@ def monitor_positions():
                         send_telegram_message(f"❌ *{symbol} SL Hit* - Position Closed.")
                         sl_count += 1
                         del open_positions[symbol]
-
                 if direction == 'Short':
                     if current_price <= pos['tp2']:
                         send_telegram_message(f"✅ *{symbol} TP2 Hit* - Full Target Reached. Position Closed.")
@@ -365,12 +342,10 @@ def monitor_positions():
                         del open_positions[symbol]
             except Exception as e:
                 logging.error(f"Monitor error for {symbol}: {e}")
-
         now = datetime.utcnow()
         tehran_hour = (now.hour + 3) % 24
         tehran_min = now.minute
         current_day = now.date()
-
         if tehran_hour == 23 and tehran_min >= 55 and current_day != last_report_day:
             total = daily_signal_count
             winrate = round(((tp1_count + tp2_count) / total) * 100, 1) if total > 0 else 0.0
@@ -388,7 +363,6 @@ Total Signals: {total}
             tp2_count = 0
             sl_count = 0
             send_telegram_message("😴 Bot going to sleep. See you tomorrow!")
-
         time.sleep(MONITOR_INTERVAL)
 
 # شروع و اجرای برنامه
