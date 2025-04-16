@@ -50,7 +50,7 @@ def send_telegram_message(message):
 
 def get_data(timeframe, symbol):
     url = "https://min-api.cryptocompare.com/data/v2/histominute"
-    aggregate = 5 if timeframe == '5m' else 15
+    aggregate = 5 if timeframe == '5m' else 15  # برای 1 ساعت می‌توان aggregate=60 در نظر گرفت
     limit = 60
     fsym, tsym = symbol[:-4], "USDT"
     params = {
@@ -71,7 +71,9 @@ def get_data(timeframe, symbol):
         if df.empty or df.isnull().all().any():
             logging.warning(f"⚠️ DataFrame is empty or all null for {symbol} in {timeframe}")
             return None
+        # تغییر نام ستون‌ها: ستون "time" را به "timestamp" تبدیل می‌کنیم
         df['timestamp'] = pd.to_datetime(df['time'], unit='s')
+        # ستون volumeto را به volume تبدیل می‌کنیم
         df['volume'] = df['volumeto']
         return df[['timestamp', 'open', 'high', 'low', 'close', 'volume']]
     except Exception as e:
@@ -86,6 +88,7 @@ def monitor_positions():
                 df = get_data('15m', symbol)
                 current_price = df['close'].iloc[-1]
                 direction = pos['direction']
+
                 if direction == 'Long':
                     if current_price >= pos['tp2']:
                         send_telegram_message(f"✅ *{symbol} TP2 Hit* - Full Target Reached. Position Closed.")
@@ -98,6 +101,7 @@ def monitor_positions():
                         send_telegram_message(f"❌ *{symbol} SL Hit* - Position Closed.")
                         sl_count += 1
                         del open_positions[symbol]
+
                 if direction == 'Short':
                     if current_price <= pos['tp2']:
                         send_telegram_message(f"✅ *{symbol} TP2 Hit* - Full Target Reached. Position Closed.")
@@ -117,6 +121,7 @@ def monitor_positions():
         tehran_hour = (now.hour + 3) % 24
         tehran_min = now.minute
         current_day = now.date()
+
         if tehran_hour == 23 and tehran_min >= 55 and current_day != last_report_day:
             total = daily_signal_count
             winrate = round(((tp1_count + tp2_count) / total) * 100, 1) if total > 0 else 0.0
@@ -134,6 +139,7 @@ Total Signals: {total}
             tp2_count = 0
             sl_count = 0
             send_telegram_message("😴 Bot going to sleep. See you tomorrow!")
+
         time.sleep(MONITOR_INTERVAL)
 
 def detect_strong_candle(row, threshold=0.7):
@@ -168,11 +174,13 @@ def check_cooldown(symbol, direction):
 
 def analyze_symbol(symbol, timeframe='15m', fast_check=False):
     global daily_signal_count
+
     if fast_check:
         df = get_data(timeframe, symbol).tail(15)
     else:
         df = get_data(timeframe, symbol)
-    if df is None or len(df) < 15:
+
+    if df is None or len(df) < 5:
         logging.info(f"{symbol}: Not enough data")
         return None, "Data too short"
 
@@ -183,6 +191,7 @@ def analyze_symbol(symbol, timeframe='15m', fast_check=False):
     if macd is None or not isinstance(macd, pd.DataFrame) or macd.isnull().all().all():
         logging.info(f"{symbol}: MACD calculation failed.")
         return None, "MACD calculation failed"
+
     df['MACD'] = macd['MACD_12_26_9']
     df['MACDs'] = macd['MACDs_12_26_9']
 
@@ -199,13 +208,13 @@ def analyze_symbol(symbol, timeframe='15m', fast_check=False):
         return None, "ATR calculation failed"
     df['ATR'] = atr_series
 
-    # تغییر منطق: استفاده از گندل سوم به عنوان نقطه ورود و گندل دوم به عنوان تایید
-    candle = df.iloc[-3]            # entry candle: سومین گندل از انتها
-    confirm_candle = df.iloc[-2]      # تایید نهایی از گندل دوم از انتها
+    # تغییر منطق: استفاده از گندل سوم از انتها به عنوان نقطه ورود و گندل دوم به عنوان تأیید نهایی
+    candle = df.iloc[-3]            # گندل سوم از انتها به عنوان entry
+    confirm_candle = df.iloc[-2]      # گندل دوم از انتها به عنوان تأیید
     signal_type = detect_strong_candle(candle) or detect_engulfing(df)
     pattern = signal_type.replace("_", " ").title() if signal_type else "None"
 
-    rsi_val = df['rsi'].iloc[-3]      # دریافت RSI از گندل ورودی
+    rsi_val = df['rsi'].iloc[-3]      # RSI از گندل ورودی
     adx_val = df['ADX'].iloc[-3]
     entry = candle['close']
     atr_val = df['ATR'].iloc[-3]
@@ -229,7 +238,7 @@ def analyze_symbol(symbol, timeframe='15m', fast_check=False):
     logging.info(f"{symbol}: Confirmations: {confirmations} (Confidence: {len(confirmations)})")
 
     confidence = len(confirmations)
-    # شرط تایید نهایی: حداقل 3 تاییدیه باید وجود داشته باشد
+    # شرط صدور سیگنال: نیاز به حداقل 3 تاییدیه
     direction = 'Long' if 'bullish' in str(signal_type) and confidence >= 3 else 'Short' if 'bearish' in str(signal_type) and confidence >= 3 else None
 
     if direction == 'Long' and confirm_candle['close'] <= confirm_candle['open']:
@@ -272,6 +281,7 @@ def analyze_symbol(symbol, timeframe='15m', fast_check=False):
         resistance_calc = df['high'].rolling(window=10).max().iloc[-2]
         support_calc = df['low'].rolling(window=10).min().iloc[-2]
         sl = tp1 = tp2 = None
+
         if direction == 'Long':
             sl = entry - atr * ATR_MULTIPLIER_SL
             tp1 = min(entry + atr * TP1_MULTIPLIER, resistance_calc)
@@ -283,6 +293,7 @@ def analyze_symbol(symbol, timeframe='15m', fast_check=False):
         else:
             logging.info(f"{symbol}: Invalid direction encountered.")
             return None, "Invalid direction"
+
         rr_ratio = abs(tp1 - entry) / abs(entry - sl)
         confidence_stars = "🔥" * confidence
         message = f"""🚨 *AI Signal Alert*
