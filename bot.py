@@ -46,12 +46,12 @@ open_positions = {}
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def send_telegram_message(message):
-    """Send a message to Telegram using HTML parse mode."""
+    """Send a message to Telegram using Markdown format."""
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
         "text": message,
-        "parse_mode": "HTML"
+        "parse_mode": "Markdown"
     }
     try:
         response = requests.post(url, json=payload)
@@ -190,16 +190,16 @@ def analyze_symbol(symbol, timeframe='15m'):
 
     daily_signal_count += 1
 
-    # Build HTML-formatted message
+    # Build Markdown-formatted message
     stars = '🔥🔥🔥'
     msg = (
-        f"🚨 <b>AI Signal Alert</b>\n"
-        f"<b>Symbol:</b> <code>{symbol}</code>\n"
-        f"<b>Signal:</b> {'🟢 BUY MARKET' if direction=='Long' else '🔴 SELL MARKET'}\n"
-        f"<b>Entry:</b> <code>{entry:.4f}</code>   <b>SL:</b> <code>{sl:.4f}</code>   <b>TP1:</b> <code>{tp1:.4f}</code>   <b>TP2:</b> <code>{tp2:.4f}</code>\n"
-        f"<b>RSI:</b> {last['RSI']:.1f}   <b>MACD_h:</b> {last['MACD_hist']:.4f}\n"
-        f"<b>Pattern:</b> {pa}\n"
-        f"<b>Strength:</b> {stars}"
+        f"🚨 *AI Signal Alert*\n"
+        f"*Symbol:* `{symbol}`\n"
+        f"*Signal:* {'🟢 BUY MARKET' if direction=='Long' else '🔴 SELL MARKET'}\n"
+        f"*Entry:* `{entry:.4f}`   *SL:* `{sl:.4f}`   *TP1:* `{tp1:.4f}`   *TP2:* `{tp2:.4f}`\n"
+        f"*RSI:* {last['RSI']:.1f}   *MACD_h:* {last['MACD_hist']:.4f}\n"
+        f"*Pattern:* {pa}\n"
+        f"*Strength:* {stars}"
     )
 
     open_positions[symbol] = {'direction':direction, 'sl':sl, 'tp1':tp1, 'tp2':tp2}
@@ -238,7 +238,7 @@ def report_daily():
     total  = wins + losses
     winrate= round(wins/total*100,1) if total>0 else 0.0
     send_telegram_message(
-        f"📊 <b>Daily Performance Report</b>\n"
+        f"📊 *Daily Performance Report*\n"
         f"Total Signals: {daily_signal_count}\n"
         f"🎯 Wins: {wins}\n"
         f"❌ Losses: {losses}\n"
@@ -251,14 +251,14 @@ def monitor():
     symbols = [
         "BTCUSDT","ETHUSDT","DOGEUSDT","BNBUSDT","XRPUSDT",
         "RENDERUSDT","TRUMPUSDT","FARTCOINUSDT","XLMUSDT",
-        "SHIBUSDT","ADAUSDT","NOTUSDT","PROMUSDT"
+        "SHIBUSDT","ADAUSDT","NOTUSDT","PROMUSDT","PENDLEUSDT"
     ]
     while True:
         now = datetime.utcnow()
         hr = (now.hour + 3) % 24; mn = now.minute
         if hr in range(*SLEEP_HOURS): time.sleep(60); continue
         if time.time() - last_hb > HEARTBEAT_INTERVAL:
-            send_telegram_message("🤖 <b>Bot live and scanning.</b>")
+            send_telegram_message("🤖 *Bot live and scanning.*")
             last_hb = time.time()
         for sym in symbols:
             msg = analyze_symbol_mtf(sym)
@@ -268,11 +268,3 @@ def monitor():
         time.sleep(CHECK_INTERVAL)
 
 @app.route('/')
-def home():
-    return "✅ Crypto Signal Bot is running."
-
-if __name__=='__main__':
-    threading.Thread(target=monitor, daemon=True).start()
-    threading.Thread(target=monitor_positions, daemon=True).start()
-    port = int(os.environ.get('PORT', 8080))
-    app.run(host='0.0.0.0', port=port)
