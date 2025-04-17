@@ -173,9 +173,13 @@ def analyze_symbol_mtf(symbol):
 
 
 def check_and_alert(symbol):
+    logging.info(f"🔍 Checking {symbol} for signal...")
     msg = analyze_symbol_mtf(symbol)
     if msg:
+        logging.info(f"{symbol}: ✅ Signal detected and sent.")
         send_telegram_message(msg)
+    else:
+        logging.info(f"{symbol}: ❌ No signal at this time.")
 
 
 def monitor_positions():
