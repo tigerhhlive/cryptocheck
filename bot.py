@@ -88,14 +88,12 @@ def check_cooldown(symbol, direction, idx):
 
 
 def detect_price_action(df):
-    # strong candle or engulfing on previous bar
     prev = df.iloc[-2]
     body = abs(prev.close - prev.open)
     rng  = prev.high - prev.low
-    if rng>0 and body/rng > PA_THRESHOLD:
+    if rng > 0 and body/rng > PA_THRESHOLD:
         return 'bullish_marubozu' if prev.close>prev.open else 'bearish_marubozu'
-    # engulfing uses two bars
-    if len(df)>=3:
+    if len(df) >= 3:
         p2, p1 = df.iloc[-3], df.iloc[-2]
         if p2.close < p2.open and p1.close>p1.open and p1.close>p2.open and p1.open<p2.close:
             return 'bullish_engulfing'
@@ -116,9 +114,8 @@ def analyze_symbol(symbol, timeframe='15m'):
     df['rsi']      = ta.rsi(df['close'], length=RSI_PERIOD)
     macd = ta.macd(df['close'], fast=MACD_FAST, slow=MACD_SLOW, signal=MACD_SIGNAL)
     df['macd_hist']= macd[f'MACDh_{MACD_FAST}_{MACD_SLOW}_{MACD_SIGNAL}']
-    # ADX via DMI
-    dmi = ta.dmi(df['high'], df['low'], df['close'], length=ADX_PERIOD)
-    df['adx']= dmi['ADX_14']
+    adx = ta.adx(df['high'], df['low'], df['close'], length=ADX_PERIOD)
+    df['adx'] = adx[f'ADX_{ADX_PERIOD}']
     df['atr']= ta.atr(df['high'], df['low'], df['close'], length=ATR_PERIOD)
 
     prev, last = df.iloc[-2], df.iloc[-1]
@@ -131,25 +128,17 @@ def analyze_symbol(symbol, timeframe='15m'):
         return None
     direction = 'Long' if long_cross else 'Short'
 
-    # RSI filter
+    # Filters
     if direction=='Long' and last.rsi < 50:  return None
     if direction=='Short' and last.rsi > 50: return None
-
-    # MACD-hist filter
     if direction=='Long' and last.macd_hist < 0:  return None
     if direction=='Short' and last.macd_hist > 0: return None
-
-    # price action filter
     pa = detect_price_action(df)
     if not pa:  return None
-
-    # ADX filter
     if last.adx < ADX_THRESHOLD: return None
 
-    # Cooldown
     if not check_cooldown(symbol, direction, idx): return None
 
-    # Build entry
     entry = last.close
     atr_val= last.atr
     if direction=='Long':
@@ -197,15 +186,11 @@ def monitor_positions():
             price = df['close'].iloc[-1]
             dir   = pos['direction']
             if dir=='Long':
-                if price>=pos['tp2']:
-                    daily_win_count+=1; del open_positions[s]
-                elif price<=pos['sl']:
-                    daily_loss_count+=1; del open_positions[s]
+                if price>=pos['tp2']: daily_win_count+=1; del open_positions[s]
+                elif price<=pos['sl']: daily_loss_count+=1; del open_positions[s]
             else:
-                if price<=pos['tp2']:
-                    daily_win_count+=1; del open_positions[s]
-                elif price>=pos['sl']:
-                    daily_loss_count+=1; del open_positions[s]
+                if price<=pos['tp2']: daily_win_count+=1; del open_positions[s]
+                elif price>=pos['sl']: daily_loss_count+=1; del open_positions[s]
         time.sleep(MONITOR_INTERVAL)
 
 
@@ -239,11 +224,11 @@ def monitor():
         time.sleep(CHECK_INTERVAL)
 
 @app.route('/')
-def home():
+ def home():
     return "✅ Crypto Signal Bot is running."
 
-if __name__ == '__main__':
+if __name__=='__main__':
     threading.Thread(target=monitor, daemon=True).start()
     threading.Thread(target=monitor_positions, daemon=True).start()
-    port = int(os.environ.get("PORT", 8080))
+    port = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=port)
