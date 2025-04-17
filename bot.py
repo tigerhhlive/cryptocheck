@@ -12,212 +12,178 @@ app = Flask(__name__)
 
 # Environment variables
 CRYPTOCOMPARE_API_KEY = os.environ.get('CRYPTOCOMPARE_API_KEY')
-TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
-TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
+TELEGRAM_BOT_TOKEN     = os.environ.get('TELEGRAM_BOT_TOKEN')
+TELEGRAM_CHAT_ID       = os.environ.get('TELEGRAM_CHAT_ID')
 
-# Strategy parameters
-EMA_FAST = 9
-EMA_SLOW = 15
-RSI_PERIOD = 14
-MACD_FAST = 12
-MACD_SLOW = 26
-MACD_SIGNAL = 9
-ATR_PERIOD = 14
-ATR_SL_MULT = 1.0   # SL = ATR * 1
-ATR_TP1_MULT = 1.0  # TP1 = ATR * 1
-ATR_TP2_MULT = 2.0  # TP2 = ATR * 2
-ADX_THRESHOLD = 20
+# Strategy parameters (matching Pine Script)
+EMA_FAST       = 9
+EMA_SLOW       = 15
+RSI_PERIOD     = 14
+MACD_FAST      = 12
+MACD_SLOW      = 26
+MACD_SIGNAL    = 9
+ATR_PERIOD     = 14
+SL_ATR_MULT    = 1.0
+TP1_ATR_MULT   = 1.5
+TP2_ATR_MULT   = 3.0
+ADX_PERIOD     = 14
+ADX_THRESHOLD  = 20
+PA_THRESHOLD   = 0.7  # price action body/range
 SIGNAL_COOLDOWN = 1800
 HEARTBEAT_INTERVAL = 7200
-CHECK_INTERVAL = 600
-MONITOR_INTERVAL = 120
-SLEEP_HOURS = (0, 7)
-# Minimum data points for indicators
-MIN_DATA_POINTS = max(EMA_SLOW, RSI_PERIOD, ATR_PERIOD, MACD_SLOW + MACD_SIGNAL)
+CHECK_INTERVAL     = 600
+MONITOR_INTERVAL   = 120
+SLEEP_HOURS        = (0, 7)
 
-# Tracking variables
+# Data requirements
+MIN_BARS = max(EMA_SLOW, RSI_PERIOD, ATR_PERIOD, MACD_SLOW + MACD_SIGNAL)
+
+# State
 last_signals = {}
 daily_signal_count = 0
 daily_win_count = 0
 daily_loss_count = 0
 open_positions = {}
 
-# Logging setup
+# Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
 def send_telegram_message(message):
-    """Send a message to Telegram using Markdown format."""
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": message,
-        "parse_mode": "Markdown"
-    }
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
     try:
-        response = requests.post(url, json=payload)
-        if response.status_code != 200:
-            logging.error(f"Telegram error: {response.text}")
+        resp = requests.post(url, json=payload)
+        if resp.status_code != 200:
+            logging.error(f"Telegram error: {resp.text}")
     except Exception as e:
         logging.error(f"Telegram exception: {e}")
 
 
 def get_data(timeframe, symbol):
-    """
-    Fetch historical minute data from CryptoCompare and return a DataFrame
-    with timestamp, OHLC, and volume (coin & quote).
-    """
-    aggregate = 5 if timeframe == '5m' else 15
+    agg = 5 if timeframe == '5m' else 15
     limit = 60
     fsym, tsym = symbol[:-4], 'USDT'
     url = 'https://min-api.cryptocompare.com/data/v2/histominute'
-    params = {
-        'fsym': fsym,
-        'tsym': tsym,
-        'limit': limit,
-        'aggregate': aggregate,
-        'api_key': CRYPTOCOMPARE_API_KEY
-    }
-    res = requests.get(url, params=params, timeout=10)
-    data = res.json().get('Data', {}).get('Data', [])
+    params = dict(fsym=fsym, tsym=tsym, limit=limit, aggregate=agg, api_key=CRYPTOCOMPARE_API_KEY)
+    res = requests.get(url, params=params, timeout=10).json()
+    data = res.get('Data', {}).get('Data', [])
     df = pd.DataFrame(data)
-    df['timestamp']     = pd.to_datetime(df['time'], unit='s')
-    df['volume_coin']   = df['volumefrom'].astype(float)
-    df['volume_quote']  = df['volumeto'].astype(float)
-    df['volume']        = df['volume_quote']
-    return df[['timestamp','open','high','low','close','volume_coin','volume_quote','volume']]
+    df['timestamp']    = pd.to_datetime(df['time'], unit='s')
+    df['open']         = df['open'].astype(float)
+    df['high']         = df['high'].astype(float)
+    df['low']          = df['low'].astype(float)
+    df['close']        = df['close'].astype(float)
+    df['volume_coin']  = df['volumefrom'].astype(float)
+    df['volume_quote'] = df['volumeto'].astype(float)
+    return df[['timestamp','open','high','low','close','volume_coin','volume_quote']]
 
 
 def check_cooldown(symbol, direction, idx):
-    """Ensure we don't resend a signal for the same candle."""
-    key = f"{symbol}_{direction}"
-    if last_signals.get(key) == idx:
+    key = f"{symbol}_{direction}_{idx}"
+    if last_signals.get(key):
         return False
-    last_signals[key] = idx
+    last_signals[key] = True
     return True
 
 
-def detect_strong_candle(row, threshold=0.7):
-    body = abs(row['close'] - row['open'])
-    rng  = row['high'] - row['low']
-    if rng == 0:
-        return None
-    return ('bullish_marubozu' if row['close'] > row['open'] else 'bearish_marubozu') if (body/rng) > threshold else None
-
-
-def detect_engulfing(df):
-    if len(df) < 3:
-        return None
-    prev, curr = df.iloc[-3], df.iloc[-2]
-    # Bullish engulfing
-    if prev['close'] < prev['open'] and curr['close'] > curr['open'] \
-       and curr['close'] > prev['open'] and curr['open'] < prev['close']:
-        return 'bullish_engulfing'
-    # Bearish engulfing
-    if prev['close'] > prev['open'] and curr['close'] < curr['open'] \
-       and curr['open'] > prev['close'] and curr['close'] < prev['open']:
-        return 'bearish_engulfing'
+def detect_price_action(df):
+    # strong candle or engulfing on previous bar
+    prev = df.iloc[-2]
+    body = abs(prev.close - prev.open)
+    rng  = prev.high - prev.low
+    if rng>0 and body/rng > PA_THRESHOLD:
+        return 'bullish_marubozu' if prev.close>prev.open else 'bearish_marubozu'
+    # engulfing uses two bars
+    if len(df)>=3:
+        p2, p1 = df.iloc[-3], df.iloc[-2]
+        if p2.close < p2.open and p1.close>p1.open and p1.close>p2.open and p1.open<p2.close:
+            return 'bullish_engulfing'
+        if p2.close > p2.open and p1.close<p1.open and p1.open>p2.close and p1.close<p2.open:
+            return 'bearish_engulfing'
     return None
 
 
 def analyze_symbol(symbol, timeframe='15m'):
-    """
-    Analyze a symbol for EMA9/15 cross, RSI, MACD-hist, price action, and
-    generate an entry signal with SL/TP based on ATR.
-    """
     global daily_signal_count
     df = get_data(timeframe, symbol)
-    if df.shape[0] < MIN_DATA_POINTS:
+    if len(df) < MIN_BARS:
         return None
 
-    # Calculate indicators
-    df['EMA_fast']  = ta.ema(df['close'], length=EMA_FAST)
-    df['EMA_slow']  = ta.ema(df['close'], length=EMA_SLOW)
-    df['RSI']       = ta.rsi(df['close'], length=RSI_PERIOD)
+    # Indicators
+    df['ema_fast'] = ta.ema(df['close'], length=EMA_FAST)
+    df['ema_slow'] = ta.ema(df['close'], length=EMA_SLOW)
+    df['rsi']      = ta.rsi(df['close'], length=RSI_PERIOD)
     macd = ta.macd(df['close'], fast=MACD_FAST, slow=MACD_SLOW, signal=MACD_SIGNAL)
-    df['MACD_hist'] = macd[f'MACDh_{MACD_FAST}_{MACD_SLOW}_{MACD_SIGNAL}']
-    df['ATR']       = ta.atr(df['high'], df['low'], df['close'], length=ATR_PERIOD)
+    df['macd_hist']= macd[f'MACDh_{MACD_FAST}_{MACD_SLOW}_{MACD_SIGNAL}']
+    # ADX via DMI
+    dmi = ta.dmi(df['high'], df['low'], df['close'], length=ADX_PERIOD)
+    df['adx']= dmi['ADX_14']
+    df['atr']= ta.atr(df['high'], df['low'], df['close'], length=ATR_PERIOD)
 
-    prev = df.iloc[-2]
-    last = df.iloc[-1]
-    idx  = df.index[-1]
+    prev, last = df.iloc[-2], df.iloc[-1]
+    idx = df.index[-1]
 
-    # EMA cross filter
-    long_cross  = (prev['EMA_fast'] < prev['EMA_slow']  and last['EMA_fast'] > last['EMA_slow'])
-    short_cross = (prev['EMA_fast'] > prev['EMA_slow']  and last['EMA_fast'] < last['EMA_slow'])
+    # EMA cross
+    long_cross  = prev.ema_fast < prev.ema_slow  and last.ema_fast > last.ema_slow
+    short_cross = prev.ema_fast > prev.ema_slow  and last.ema_fast < last.ema_slow
     if not (long_cross or short_cross):
-        logging.info(f"{symbol}: No EMA9/15 cross")
         return None
     direction = 'Long' if long_cross else 'Short'
 
     # RSI filter
-    if direction=='Long' and last['RSI'] < 50:
-        logging.info(f"{symbol}: RSI < 50 for Long")
-        return None
-    if direction=='Short' and last['RSI'] > 50:
-        logging.info(f"{symbol}: RSI > 50 for Short")
-        return None
+    if direction=='Long' and last.rsi < 50:  return None
+    if direction=='Short' and last.rsi > 50: return None
 
-    # MACD histogram filter
-    if direction=='Long' and last['MACD_hist'] < 0:
-        logging.info(f"{symbol}: MACD_hist < 0 for Long")
-        return None
-    if direction=='Short' and last['MACD_hist'] > 0:
-        logging.info(f"{symbol}: MACD_hist > 0 for Short")
-        return None
+    # MACD-hist filter
+    if direction=='Long' and last.macd_hist < 0:  return None
+    if direction=='Short' and last.macd_hist > 0: return None
 
-    # Price action filter
-    pa = detect_strong_candle(last) or detect_engulfing(df)
-    if not pa:
-        logging.info(f"{symbol}: No price-action pattern")
-        return None
+    # price action filter
+    pa = detect_price_action(df)
+    if not pa:  return None
 
-    entry = last['close']
-    atr   = last['ATR']
-    # Calculate SL/TP
-    if direction == 'Long':
-        sl  = entry - atr * ATR_SL_MULT
-        tp1 = entry + atr * ATR_TP1_MULT
-        tp2 = entry + atr * ATR_TP2_MULT
+    # ADX filter
+    if last.adx < ADX_THRESHOLD: return None
+
+    # Cooldown
+    if not check_cooldown(symbol, direction, idx): return None
+
+    # Build entry
+    entry = last.close
+    atr_val= last.atr
+    if direction=='Long':
+        sl  = entry - atr_val * SL_ATR_MULT
+        tp1 = entry + atr_val * TP1_ATR_MULT
+        tp2 = entry + atr_val * TP2_ATR_MULT
     else:
-        sl  = entry + atr * ATR_SL_MULT
-        tp1 = entry - atr * ATR_TP1_MULT
-        tp2 = entry - atr * ATR_TP2_MULT
-
-    # Check cooldown
-    if not check_cooldown(symbol, direction, idx):
-        logging.info(f"{symbol}: Cooldown active")
-        return None
+        sl  = entry + atr_val * SL_ATR_MULT
+        tp1 = entry - atr_val * TP1_ATR_MULT
+        tp2 = entry - atr_val * TP2_ATR_MULT
 
     daily_signal_count += 1
+    open_positions[symbol] = dict(direction=direction, sl=sl, tp1=tp1, tp2=tp2)
 
-    # Build Markdown-formatted message
-    stars = '🔥🔥🔥'
-    msg = (
-        f"🚨 *AI Signal Alert*\n"
-        f"*Symbol:* `{symbol}`\n"
-        f"*Signal:* {'🟢 BUY MARKET' if direction=='Long' else '🔴 SELL MARKET'}\n"
-        f"*Entry:* `{entry:.4f}`   *SL:* `{sl:.4f}`   *TP1:* `{tp1:.4f}`   *TP2:* `{tp2:.4f}`\n"
-        f"*RSI:* {last['RSI']:.1f}   *MACD_h:* {last['MACD_hist']:.4f}\n"
-        f"*Pattern:* {pa}\n"
-        f"*Strength:* {stars}"
-    )
-
-    open_positions[symbol] = {'direction':direction, 'sl':sl, 'tp1':tp1, 'tp2':tp2}
+    stars = '🔥'*3
+    msg = (f"🚨 *AI Signal Alert*\n"
+           f"*Symbol:* `{symbol}`\n"
+           f"*Signal:* {'🟢 BUY' if direction=='Long' else '🔴 SELL'}\n"
+           f"*Entry:* `{entry:.4f}`  *SL:* `{sl:.4f}`  *TP1:* `{tp1:.4f}`  *TP2:* `{tp2:.4f}`\n"
+           f"*RSI:* {last.rsi:.1f}  *MACD_h:* {last.macd_hist:.4f}\n"
+           f"*Pattern:* {pa}\n"
+           f"*Strength:* {stars}")
     return msg
 
 
 def analyze_symbol_mtf(symbol):
-    # Multi-timeframe: require both 5m and 15m signals agree
-    msg5 = analyze_symbol(symbol, '5m')
-    msg15 = analyze_symbol(symbol, '15m')
-    if msg5 and msg15 and (("BUY" in msg5 and "BUY" in msg15) or ("SELL" in msg5 and "SELL" in msg15)):
-        return msg15
+    m5 = analyze_symbol(symbol,'5m')
+    m15= analyze_symbol(symbol,'15m')
+    if m5 and m15 and (('BUY' in m5 and 'BUY' in m15) or ('SELL' in m5 and 'SELL' in m15)):
+        return m15
     return None
 
 
 def check_and_alert(symbol):
-    """Helper to analyze a symbol and send alert if any."""
     msg = analyze_symbol_mtf(symbol)
     if msg:
         send_telegram_message(msg)
@@ -226,83 +192,58 @@ def check_and_alert(symbol):
 def monitor_positions():
     global daily_win_count, daily_loss_count
     while True:
-        for sym, pos in list(open_positions.items()):
-            df = get_data('15m', sym)
+        for s,pos in list(open_positions.items()):
+            df = get_data('15m', s)
             price = df['close'].iloc[-1]
-            dir = pos['direction']
-            if dir == 'Long':
-                if price >= pos['tp2']:
-                    daily_win_count += 1
-                    del open_positions[sym]
-                elif price <= pos['sl']:
-                    daily_loss_count += 1
-                    del open_positions[sym]
+            dir   = pos['direction']
+            if dir=='Long':
+                if price>=pos['tp2']:
+                    daily_win_count+=1; del open_positions[s]
+                elif price<=pos['sl']:
+                    daily_loss_count+=1; del open_positions[s]
             else:
-                if price <= pos['tp2']:
-                    daily_win_count += 1
-                    del open_positions[sym]
-                elif price >= pos['sl']:
-                    daily_loss_count += 1
-                    del open_positions[sym]
+                if price<=pos['tp2']:
+                    daily_win_count+=1; del open_positions[s]
+                elif price>=pos['sl']:
+                    daily_loss_count+=1; del open_positions[s]
         time.sleep(MONITOR_INTERVAL)
 
 
 def report_daily():
-    wins   = daily_win_count
-    losses = daily_loss_count
-    total  = wins + losses
-    winrate = round(wins/total*100,1) if total>0 else 0.0
+    total= daily_win_count+daily_loss_count
+    wr = round(daily_win_count/total*100,1) if total else 0.0
     send_telegram_message(
-        f"📊 *Daily Performance Report*\n"
-        f"Total Signals: {daily_signal_count}\n"
-        f"🎯 Wins: {wins}\n"
-        f"❌ Losses: {losses}\n"
-        f"📈 Winrate: {winrate}%"
-    )
+        f"📊 *Daily Report*\n"
+        f"Signals: {daily_signal_count}\n"
+        f"Wins: {daily_win_count}  Losses: {daily_loss_count}\n"
+        f"Winrate: {wr}%")
 
 
 def monitor():
-    """
-    Main loop: every CHECK_INTERVAL scan all symbols concurrently.
-    Every HEARTBEAT_INTERVAL send a heartbeat.
-    Send daily report at 23:55 Tehran.
-    """
-    last_hb = 0
-    symbols = [
-        "BTCUSDT","ETHUSDT","DOGEUSDT","BNBUSDT","XRPUSDT",
-        "RENDERUSDT","TRUMPUSDT","FARTCOINUSDT","XLMUSDT",
-        "SHIBUSDT","ADAUSDT","NOTUSDT","PROMUSDT","PENDLEUSDT"
-    ]
+    last_hb=0
+    syms = ["BTCUSDT","ETHUSDT","DOGEUSDT","BNBUSDT","XRPUSDT",
+            "RENDERUSDT","TRUMPUSDT","FARTCOINUSDT","XLMUSDT",
+            "SHIBUSDT","ADAUSDT","NOTUSDT","PROMUSDT","PENDLEUSDT"]
     while True:
-        now = datetime.utcnow()
-        hr = (now.hour + 3) % 24; mn = now.minute
-        # Sleep hours
-        if SLEEP_HOURS[0] <= hr < SLEEP_HOURS[1]:
-            time.sleep(60)
-            continue
-        # Heartbeat
-        if time.time() - last_hb > HEARTBEAT_INTERVAL:
-            send_telegram_message("🤖 *Bot live and scanning.*")
+        now = datetime.utcnow(); hr=(now.hour+3)%24; mn=now.minute
+        if SLEEP_HOURS[0]<=hr<SLEEP_HOURS[1]: time.sleep(60); continue
+        if time.time()-last_hb>HEARTBEAT_INTERVAL:
+            send_telegram_message("🤖 Bot live and scanning.")
             last_hb = time.time()
-        # Check each symbol
-        threads = []
-        for sym in symbols:
-            t = threading.Thread(target=check_and_alert, args=(sym,))
-            t.start()
-            threads.append(t)
-        for t in threads:
-            t.join()
-        # Daily report
-        if hr == 23 and mn >= 55:
-            report_daily()
+        threads=[]
+        for s in syms:
+            t=threading.Thread(target=check_and_alert,args=(s,))
+            t.start(); threads.append(t)
+        for t in threads: t.join()
+        if hr==23 and mn>=55: report_daily()
         time.sleep(CHECK_INTERVAL)
 
 @app.route('/')
 def home():
     return "✅ Crypto Signal Bot is running."
 
-if __name__=='__main__':
+if __name__ == '__main__':
     threading.Thread(target=monitor, daemon=True).start()
     threading.Thread(target=monitor_positions, daemon=True).start()
-    port = int(os.environ.get('PORT', 8080))
+    port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
