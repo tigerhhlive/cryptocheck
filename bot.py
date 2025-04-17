@@ -45,6 +45,7 @@ open_positions = {}
 # Logging setup
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+
 def send_telegram_message(message):
     """Send a message to Telegram using Markdown format."""
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -208,12 +209,18 @@ def analyze_symbol(symbol, timeframe='15m'):
 
 def analyze_symbol_mtf(symbol):
     # Multi-timeframe: require both 5m and 15m signals agree
-    msg5 = analyze_symbol(symbol, '5m')  
+    msg5 = analyze_symbol(symbol, '5m')
     msg15 = analyze_symbol(symbol, '15m')
-    if msg5 and msg15:
-        if ("BUY" in msg5 and "BUY" in msg15) or ("SELL" in msg5 and "SELL" in msg15):
-            return msg15
+    if msg5 and msg15 and (("BUY" in msg5 and "BUY" in msg15) or ("SELL" in msg5 and "SELL" in msg15)):
+        return msg15
     return None
+
+
+def check_and_alert(symbol):
+    """Helper to analyze a symbol and send alert if any."""
+    msg = analyze_symbol_mtf(symbol)
+    if msg:
+        send_telegram_message(msg)
 
 
 def monitor_positions():
@@ -223,12 +230,20 @@ def monitor_positions():
             df = get_data('15m', sym)
             price = df['close'].iloc[-1]
             dir = pos['direction']
-            if dir=='Long':
-                if price >= pos['tp2']: daily_win_count+=1; del open_positions[sym]
-                elif price <= pos['sl']: daily_loss_count+=1; del open_positions[sym]
+            if dir == 'Long':
+                if price >= pos['tp2']:
+                    daily_win_count += 1
+                    del open_positions[sym]
+                elif price <= pos['sl']:
+                    daily_loss_count += 1
+                    del open_positions[sym]
             else:
-                if price <= pos['tp2']: daily_win_count+=1; del open_positions[sym]
-                elif price >= pos['sl']: daily_loss_count+=1; del open_positions[sym]
+                if price <= pos['tp2']:
+                    daily_win_count += 1
+                    del open_positions[sym]
+                elif price >= pos['sl']:
+                    daily_loss_count += 1
+                    del open_positions[sym]
         time.sleep(MONITOR_INTERVAL)
 
 
@@ -236,7 +251,7 @@ def report_daily():
     wins   = daily_win_count
     losses = daily_loss_count
     total  = wins + losses
-    winrate= round(wins/total*100,1) if total>0 else 0.0
+    winrate = round(wins/total*100,1) if total>0 else 0.0
     send_telegram_message(
         f"📊 *Daily Performance Report*\n"
         f"Total Signals: {daily_signal_count}\n"
@@ -247,6 +262,11 @@ def report_daily():
 
 
 def monitor():
+    """
+    Main loop: every CHECK_INTERVAL scan all symbols concurrently.
+    Every HEARTBEAT_INTERVAL send a heartbeat.
+    Send daily report at 23:55 Tehran.
+    """
     last_hb = 0
     symbols = [
         "BTCUSDT","ETHUSDT","DOGEUSDT","BNBUSDT","XRPUSDT",
@@ -256,13 +276,23 @@ def monitor():
     while True:
         now = datetime.utcnow()
         hr = (now.hour + 3) % 24; mn = now.minute
-        if hr in range(*SLEEP_HOURS): time.sleep(60); continue
+        # Sleep hours
+        if SLEEP_HOURS[0] <= hr < SLEEP_HOURS[1]:
+            time.sleep(60)
+            continue
+        # Heartbeat
         if time.time() - last_hb > HEARTBEAT_INTERVAL:
             send_telegram_message("🤖 *Bot live and scanning.*")
             last_hb = time.time()
+        # Check each symbol
+        threads = []
         for sym in symbols:
-            msg = analyze_symbol_mtf(sym)
-            if msg: send_telegram_message(msg)
+            t = threading.Thread(target=check_and_alert, args=(sym,))
+            t.start()
+            threads.append(t)
+        for t in threads:
+            t.join()
+        # Daily report
         if hr == 23 and mn >= 55:
             report_daily()
         time.sleep(CHECK_INTERVAL)
@@ -271,9 +301,8 @@ def monitor():
 def home():
     return "✅ Crypto Signal Bot is running."
 
-if __name__ == '__main__':
+if __name__=='__main__':
     threading.Thread(target=monitor, daemon=True).start()
     threading.Thread(target=monitor_positions, daemon=True).start()
-    port = int(os.environ.get("PORT", 8080))
+    port = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=port)
-
