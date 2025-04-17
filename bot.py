@@ -224,11 +224,11 @@ def monitor():
         time.sleep(CHECK_INTERVAL)
 
 @app.route('/')
- def home():
+def home():
     return "✅ Crypto Signal Bot is running."
 
-if __name__=='__main__':
+if __name__ == '__main__':
     threading.Thread(target=monitor, daemon=True).start()
     threading.Thread(target=monitor_positions, daemon=True).start()
-    port = int(os.environ.get('PORT', 8080))
+    port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
