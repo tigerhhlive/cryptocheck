@@ -104,9 +104,17 @@ def detect_price_action(df):
 
 def analyze_symbol(symbol, timeframe='15m'):
     global daily_signal_count
+
     df = get_data(timeframe, symbol)
-    if len(df) < MIN_BARS:
+    if df is None or len(df) < MIN_BARS:
         return None
+
+    # ذخیره دیتا در فایل CSV
+    try:
+        df.to_csv(f"{symbol}_data.csv", index=False)
+        logging.info(f"📁 Saved raw data to {symbol}_data.csv")
+    except Exception as e:
+        logging.error(f"❌ Failed to save data for {symbol}: {e}")
 
     # Indicators
     df['ema_fast'] = ta.ema(df['close'], length=EMA_FAST)
