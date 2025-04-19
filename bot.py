@@ -10,14 +10,15 @@ from datetime import datetime
 
 app = Flask(__name__)
 
-# Environment
+# ────── Configuration ──────
 CRYPTOCOMPARE_API_KEY = os.environ.get('CRYPTOCOMPARE_API_KEY')
-TELEGRAM_BOT_TOKEN      = os.environ.get('TELEGRAM_BOT_TOKEN')
-TELEGRAM_CHAT_ID        = os.environ.get('TELEGRAM_CHAT_ID')
+TELEGRAM_BOT_TOKEN   = os.environ.get('TELEGRAM_BOT_TOKEN')
+TELEGRAM_CHAT_ID     = os.environ.get('TELEGRAM_CHAT_ID')
 
 # Strategy parameters
 EMA_FAST        = 9
 EMA_SLOW        = 15
+EMA_TREND       = 200    # for simulated higher‑TF trend on 15m
 RSI_PERIOD      = 14
 MACD_FAST       = 12
 MACD_SLOW       = 26
@@ -26,21 +27,27 @@ ATR_PERIOD      = 14
 ATR_MULTIPLIER_SL = 1.2
 TP1_MULTIPLIER  = 1.8
 TP2_MULTIPLIER  = 2.8
-MIN_PERCENT_RISK = 0.03
-MIN_ATR         = 0.001
-SIGNAL_COOLDOWN = 1800
-CHECK_INTERVAL  = 600
+ADX_PERIOD      = 14
+ADX_THRESHOLD   = 25
+VOL_MA_PERIOD   = 20
+SESSION_START_UTC = 7    # allow signals from 07:00 UTC
+SESSION_END_UTC   = 19   # until 19:00 UTC
+SIGNAL_COOLDOWN  = 1800  # seconds
+CHECK_INTERVAL   = 600   # seconds between scans
 HEARTBEAT_INTERVAL = 7200
-SLEEP_HOURS     = (0, 7)
-MIN_BARS        = 30
+SLEEP_HOURS     = (0, 7) # Tehran hours to suspend checks
+MIN_BARS        = max(EMA_TREND, VOL_MA_PERIOD, ATR_PERIOD, MACD_SLOW + MACD_SIGNAL)
 
 # State
-last_signals      = {}
+last_signal_time = {}   # key: symbol_direction -> timestamp
+last_signal_dir  = {}   # key: symbol -> last direction
 daily_signal_count = 0
 
 # Logging
-logging.basicConfig(level=logging.INFO,
-                    format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 
 
 def send_telegram_message(text: str):
@@ -59,122 +66,170 @@ def send_telegram_message(text: str):
 
 
 def get_data(timeframe: str, symbol: str) -> pd.DataFrame | None:
-    """Fetch OHLCV minute data from CryptoCompare."""
-    aggregate = 5 if timeframe == '5m' else 15
-    params = {
-        'fsym': symbol[:-4],
-        'tsym': 'USDT',
-        'limit': 100,
-        'aggregate': aggregate,
-        'api_key': CRYPTOCOMPARE_API_KEY
-    }
+    """
+    Fetch minute or hourly data.
+    Use histominute for 5m/15m, histohour for 1h.
+    """
+    fsym, tsym = symbol[:-4], 'USDT'
+    if timeframe in ('1h', '60m'):
+        url = 'https://min-api.cryptocompare.com/data/v2/histohour'
+        limit = 48
+        params = {'fsym': fsym, 'tsym': tsym, 'limit': limit, 'api_key': CRYPTOCOMPARE_API_KEY}
+    else:
+        url = 'https://min-api.cryptocompare.com/data/v2/histominute'
+        agg = 5 if timeframe == '5m' else 15
+        limit = 100
+        params = {
+            'fsym':       fsym,
+            'tsym':       tsym,
+            'limit':      limit,
+            'aggregate':  agg,
+            'api_key':    CRYPTOCOMPARE_API_KEY
+        }
     try:
-        r = requests.get("https://min-api.cryptocompare.com/data/v2/histominute",
-                         params=params, timeout=10)
-        data = r.json().get("Data", {}).get("Data", [])
+        r = requests.get(url, params=params, timeout=10)
+        data = r.json().get('Data', {}).get('Data', [])
         if not isinstance(data, list) or not data:
-            logging.warning(f"No data for {symbol}")
+            logging.warning(f"{symbol} {timeframe}: no data")
             return None
         df = pd.DataFrame(data).dropna()
         df['timestamp'] = pd.to_datetime(df['time'], unit='s')
-        df['volume']    = df['volumeto']
+        df['open']      = df['open'].astype(float)
+        df['high']      = df['high'].astype(float)
+        df['low']       = df['low'].astype(float)
+        df['close']     = df['close'].astype(float)
+        # use quote volume
+        df['volume']    = df['volumeto'].astype(float)
         return df[['timestamp','open','high','low','close','volume']]
     except Exception as e:
-        logging.error(f"Error fetching {symbol}: {e}")
+        logging.error(f"Error fetching {symbol} {timeframe}: {e}")
         return None
 
 
+def in_session() -> bool:
+    """Allow signals only during high-liquidity UTC hours."""
+    hr = datetime.utcnow().hour
+    return SESSION_START_UTC <= hr < SESSION_END_UTC
+
+
 def check_cooldown(symbol: str, direction: str) -> bool:
-    """Prevent duplicate signals on same candle."""
+    """Prevent duplicate signals: per-candle and per-direction."""
     key = f"{symbol}_{direction}"
     now = time.time()
-    last = last_signals.get(key, 0)
+    last = last_signal_time.get(key, 0)
     if now - last < SIGNAL_COOLDOWN:
         return False
-    last_signals[key] = now
+    # also prevent same-dir until opposite dir occurs
+    if last_signal_dir.get(symbol) == direction:
+        return False
+    last_signal_time[key] = now
+    last_signal_dir[symbol] = direction
     return True
 
 
 def analyze_symbol(symbol: str, timeframe: str = '15m') -> str | None:
-    """
-    Core signal logic: EMA crossover + RSI + MACD hist + confirmation candle.
-    Returns a Markdown message if a signal is detected.
-    """
     global daily_signal_count
+
+    # session filter
+    if not in_session():
+        logging.info(f"{symbol}: outside session hours")
+        return None
+
     df = get_data(timeframe, symbol)
     if df is None or len(df) < MIN_BARS:
         return None
 
     # Indicators
-    df['EMA_FAST']  = ta.ema(df['close'], length=EMA_FAST)
-    df['EMA_SLOW']  = ta.ema(df['close'], length=EMA_SLOW)
+    df['EMA_fast']  = ta.ema(df['close'], length=EMA_FAST)
+    df['EMA_slow']  = ta.ema(df['close'], length=EMA_SLOW)
+    df['EMA_trend'] = ta.ema(df['close'], length=EMA_TREND)
     df['RSI']       = ta.rsi(df['close'], length=RSI_PERIOD)
     macd = ta.macd(df['close'],
                    fast=MACD_FAST,
                    slow=MACD_SLOW,
                    signal=MACD_SIGNAL)
-    df['MACD_Hist'] = macd[f"MACDh_{MACD_FAST}_{MACD_SLOW}_{MACD_SIGNAL}"]
+    df['MACD_hist'] = macd[f"MACDh_{MACD_FAST}_{MACD_SLOW}_{MACD_SIGNAL}"]
     df['ATR']       = ta.atr(df['high'], df['low'], df['close'], length=ATR_PERIOD)
+    df['vol_ma']    = df['volume'].rolling(VOL_MA_PERIOD).mean()
 
-    # Use the penultimate candle for entry conditions,
-    # and the last candle for confirmation direction.
     candle  = df.iloc[-2]
     confirm = df.iloc[-1]
-    entry   = candle['close']
-    atr_val = max(candle['ATR'], entry * MIN_PERCENT_RISK, MIN_ATR)
 
-    long_cond  = (candle['EMA_FAST'] > candle['EMA_SLOW']
-                  and candle['RSI'] >= 50
-                  and candle['MACD_Hist'] > 0)
-    short_cond = (candle['EMA_FAST'] < candle['EMA_SLOW']
-                  and candle['RSI'] <= 50
-                  and candle['MACD_Hist'] < 0)
+    # Trend filter (simulated higher-TF)
+    if candle['close'] <= candle['EMA_trend']:
+        logging.info(f"{symbol}: against long-term trend")
+        return None
+
+    # Volume filter
+    if confirm['volume'] < df['vol_ma'].iloc[-1]:
+        logging.info(f"{symbol}: low volume")
+        return None
+
+    # ADX filter
+    adx = ta.adx(df['high'], df['low'], df['close'], length=ADX_PERIOD)['ADX_14'].iloc[-1]
+    if adx < ADX_THRESHOLD:
+        logging.info(f"{symbol}: low ADX {adx:.1f}")
+        return None
+
+    # Entry conditions on candle
+    long_cross  = candle['EMA_fast'] > candle['EMA_slow']
+    short_cross = candle['EMA_fast'] < candle['EMA_slow']
+    long_cond   = long_cross and candle['RSI'] >= 50 and candle['MACD_hist'] > 0
+    short_cond  = short_cross and candle['RSI'] <= 50 and candle['MACD_hist'] < 0
 
     direction = None
     if long_cond and confirm['close'] > confirm['open']:
         direction = 'Long'
     elif short_cond and confirm['close'] < confirm['open']:
         direction = 'Short'
-
-    if not direction or not check_cooldown(symbol, direction):
+    else:
+        logging.info(f"{symbol}: no valid EMA/RSI/MACD/confirm")
         return None
 
-    # Prepare targets & stop loss
-    daily_signal_count += 1
+    # Cooldown & dedup
+    if not check_cooldown(symbol, direction):
+        logging.info(f"{symbol}: cooldown or duplicate")
+        return None
+
+    # SL/TP calculation
+    entry = candle['close']
+    atr   = max(candle['ATR'], entry * MIN_PERCENT_RISK, 0.001)
     if direction == 'Long':
-        sl  = entry - atr_val * ATR_MULTIPLIER_SL
-        tp1 = entry + atr_val * TP1_MULTIPLIER
+        sl  = entry - atr * ATR_MULTIPLIER_SL
+        tp1 = entry + atr * TP1_MULTIPLIER
         tp2 = tp1  + (tp1  - entry) * 1.2
     else:
-        sl  = entry + atr_val * ATR_MULTIPLIER_SL
-        tp1 = entry - atr_val * TP1_MULTIPLIER
+        sl  = entry + atr * ATR_MULTIPLIER_SL
+        tp1 = entry - atr * TP1_MULTIPLIER
         tp2 = tp1  - (entry - tp1)  * 1.2
 
-    rr_ratio = abs(tp1 - entry) / abs(entry - sl)
+    rr = abs(tp1 - entry) / abs(entry - sl)
+    daily_signal_count += 1
 
+    # Build message
     msg = (
-        "*Signal Detected*\n"
+        f"*Signal Detected*\n"
         f"*Symbol:* `{symbol}`\n"
         f"*Type:* {'🟢 BUY' if direction=='Long' else '🔴 SELL'}\n"
         f"*Entry:* `{entry:.6f}`\n"
-        f"*Stop Loss:* `{sl:.6f}`\n"
+        f"*SL:* `{sl:.6f}`\n"
         f"*TP1:* `{tp1:.6f}`\n"
         f"*TP2:* `{tp2:.6f}`\n"
-        f"*RR:* `{rr_ratio:.2f}X`\n"
+        f"*RR:* `{rr:.2f}X`\n"
+        f"*ADX:* {adx:.1f}\n"
+        f"*Vol:* {confirm['volume']:.0f} (MA{VOL_MA_PERIOD})\n"
     )
     return msg
 
 
 def analyze_symbol_mtf(symbol: str) -> str | None:
-    """Multi-timeframe check: prefer 15m over 5m."""
+    # prefer 15m, fallback to 5m
     m15 = analyze_symbol(symbol, '15m')
-    if m15:
-        return m15
-    return analyze_symbol(symbol, '5m')
+    return m15 or analyze_symbol(symbol, '5m')
 
 
 def check_and_alert(symbol: str):
-    logging.info(f"🔍 Checking {symbol} for signal...")
+    logging.info(f"🔍 Checking {symbol}…")
     msg = analyze_symbol_mtf(symbol)
     if msg:
         send_telegram_message(msg)
@@ -188,19 +243,18 @@ def monitor():
     ]
     last_hb = 0
     while True:
-        now = datetime.utcnow()
-        hour_tehran = (now.hour + 3) % 24
-        # Sleep during quiet hours
-        if SLEEP_HOURS[0] <= hour_tehran < SLEEP_HOURS[1]:
+        # suspend during Tehran sleep hours
+        hr_tehran = (datetime.utcnow().hour + 3) % 24
+        if SLEEP_HOURS[0] <= hr_tehran < SLEEP_HOURS[1]:
             time.sleep(60)
             continue
 
-        # Heartbeat
+        # heartbeat
         if time.time() - last_hb > HEARTBEAT_INTERVAL:
-            send_telegram_message("🤖 Bot is alive and checking...")
+            send_telegram_message("🤖 Bot is alive and scanning.")
             last_hb = time.time()
 
-        # Parallel symbol checks
+        # scan symbols in threads
         threads = []
         for sym in symbols:
             t = threading.Thread(target=check_and_alert, args=(sym,))
@@ -213,7 +267,7 @@ def monitor():
 
 
 def monitor_positions():
-    # Placeholder for future PnL tracking
+    # placeholder for future PnL tracking
     pass
 
 
