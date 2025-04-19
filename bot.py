@@ -58,6 +58,21 @@ def send_telegram_message(message):
             logging.error(f"Telegram error: {resp.text}")
     except Exception as e:
         logging.error(f"Telegram exception: {e}")
+        
+def send_csv_to_telegram(symbol):
+    file_path = f"{symbol}_data.csv"
+    try:
+        with open(file_path, 'rb') as file:
+            url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendDocument"
+            files = {'document': file}
+            data = {'chat_id': TELEGRAM_CHAT_ID, 'caption': f"{symbol} raw data"}
+            response = requests.post(url, files=files, data=data)
+            if response.status_code != 200:
+                logging.error(f"❌ Failed to send CSV for {symbol}: {response.text}")
+            else:
+                logging.info(f"✅ Sent CSV file for {symbol} to Telegram.")
+    except Exception as e:
+        logging.error(f"❌ Error sending CSV: {e}")
 
 
 def get_data(timeframe, symbol):
@@ -104,17 +119,16 @@ def detect_price_action(df):
 
 def analyze_symbol(symbol, timeframe='15m'):
     global daily_signal_count
-
     df = get_data(timeframe, symbol)
     if df is None or len(df) < MIN_BARS:
         return None
 
-    # ذخیره دیتا در فایل CSV
-    try:
-        df.to_csv(f"{symbol}_data.csv", index=False)
-        logging.info(f"📁 Saved raw data to {symbol}_data.csv")
-    except Exception as e:
-        logging.error(f"❌ Failed to save data for {symbol}: {e}")
+    # ذخیره داده به صورت CSV
+    csv_path = f"{symbol}_data.csv"
+    df.to_csv(csv_path, index=False)
+
+    # ارسال فایل به تلگرام
+    send_csv_to_telegram(symbol)
 
     # Indicators
     df['ema_fast'] = ta.ema(df['close'], length=EMA_FAST)
