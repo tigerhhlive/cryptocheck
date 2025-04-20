@@ -61,12 +61,13 @@ def get_data(tf: str, sym: str) -> pd.DataFrame:
     return df[["open","high","low","close","vol"]]
 
 def pivot_high(df, lb):
-    ph = df['high'].rolling(window=lb*2+1, center=True).apply(lambda x: 1 if x[lb]==x.max() else 0)
+    ph = df['high'].rolling(window=lb*2+1, center=True).apply(lambda x: 1 if x.iloc[lb]==x.max() else 0)
     return ph == 1
 
 def pivot_low(df, lb):
-    pl = df['low'].rolling(window=lb*2+1, center=True).apply(lambda x: 1 if x[lb]==x.min() else 0)
+    pl = df['low'].rolling(window=lb*2+1, center=True).apply(lambda x: 1 if x.iloc[lb]==x.min() else 0)
     return pl == 1
+
 
 def check_cooldown(sym, direction, idx):
     key = f"{sym}_{direction}"
