@@ -172,18 +172,13 @@ def monitor_positions():
 
 def report_daily():
     total = daily_wins + daily_losses
-    wr    = round(daily_wins/total*100,1) if total>0 else 0
-    send_telegram(
-        f"📊 *Daily Report*
-"
-        f"Signals: {daily_signals}
-"
-        f"✅ Wins: {daily_wins}
-"
-        f"❌ Losses: {daily_losses}
-"
-        f"🏆 Winrate: {wr}%"
-    )
+    wr = round(daily_wins / total * 100, 1) if total > 0 else 0
+    msg = f"""📊 *Daily Report*
+Signals: {daily_signals}
+✅ Wins: {daily_wins}
+❌ Losses: {daily_losses}
+🏆 Winrate: {wr}%"""
+    send_telegram(msg)
 
 def monitor():
     last_hb = 0
