@@ -70,10 +70,12 @@ def get_data(tf, symbol):
     return df[["open", "high", "low", "close", "vol"]]
 
 def pivot_high(df, lb):
-    return df['high'].rolling(window=lb*2+1, center=True).apply(lambda x: 1 if x[lb]==x.max() else 0) == 1
+    ph = df['high'].rolling(window=lb*2+1, center=True).apply(lambda x: 1 if x.iloc[lb]==x.max() else 0)
+    return ph == 1
 
 def pivot_low(df, lb):
-    return df['low'].rolling(window=lb*2+1, center=True).apply(lambda x: 1 if x[lb]==x.min() else 0) == 1
+    pl = df['low'].rolling(window=lb*2+1, center=True).apply(lambda x: 1 if x.iloc[lb]==x.min() else 0)
+    return pl == 1
 
 def check_cooldown(symbol, direction, idx):
     key = f"{symbol}_{direction}"
