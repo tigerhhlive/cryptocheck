@@ -75,48 +75,58 @@ def check_cooldown(sym, direction, idx):
 def analyze_symbol(sym, tf="15m"):
     global daily_signals
     df = get_data(tf, sym)
-    if len(df) < PIVOT_LOOKBACK*2+5:
+    if len(df) < PIVOT_LOOKBACK * 2 + 5:
         return None
 
+    # محاسبه اندیکاتورها
     df["EMA9"] = ta.ema(df["close"], length=EMA_LEN)
-    df["ATR"]  = ta.atr(df["high"], df["low"], df["close"], length=ATR_LEN)
-    df["RSI"]  = ta.rsi(df["close"], length=14)
-    df["PH"]   = pivot_high(df, PIVOT_LOOKBACK)
-    df["PL"]   = pivot_low(df, PIVOT_LOOKBACK)
+    df["ATR"] = ta.atr(df["high"], df["low"], df["close"], length=ATR_LEN)
+    df["RSI"] = ta.rsi(df["close"], length=14)
+
+    # شناسایی OB
+    df["PH"] = pivot_high(df, PIVOT_LOOKBACK)
+    df["PL"] = pivot_low(df, PIVOT_LOOKBACK)
 
     last = df.iloc[-1]
     prev = df.iloc[-2]
-    idx  = df.index[-1]
-    direction = None
-    entry     = last["close"]
-    atr       = last["ATR"]
+    idx = df.index[-1]
 
+    direction = None
+    entry = last["close"]
+    atr = last["ATR"]
+
+    if pd.isna(atr) or pd.isna(last["EMA9"]) or pd.isna(last["RSI"]):
+        return None
+
+    # سیگنال لانگ: اگر PL و کندل بالای EMA9 بسته شده و RSI > 30
     if prev["PL"] and last["close"] > last["EMA9"] and last["RSI"] > 30:
         direction = "Long"
+    # سیگنال شورت: اگر PH و کندل پایین EMA9 بسته شده و RSI < 70
     elif prev["PH"] and last["close"] < last["EMA9"] and last["RSI"] < 70:
         direction = "Short"
 
     if not direction:
-        logging.info(f"{sym}: No signal")
+        logging.info(f"{sym}: No valid signal condition met.")
         return None
 
     if not check_cooldown(sym, direction, idx):
-        logging.info(f"{sym}: Cooldown active")
+        logging.info(f"{sym}: Cooldown active.")
         return None
 
-    if direction=="Long":
-        sl  = entry - atr*ATR_SL_MULT
-        tp1 = entry + atr*ATR_TP1_MULT
-        tp2 = entry + atr*ATR_TP2_MULT
+    # محاسبه SL/TP
+    if direction == "Long":
+        sl = entry - atr * ATR_SL_MULT
+        tp1 = entry + atr * ATR_TP1_MULT
+        tp2 = entry + atr * ATR_TP2_MULT
     else:
-        sl  = entry + atr*ATR_SL_MULT
-        tp1 = entry - atr*ATR_TP1_MULT
-        tp2 = entry - atr*ATR_TP2_MULT
+        sl = entry + atr * ATR_SL_MULT
+        tp1 = entry - atr * ATR_TP1_MULT
+        tp2 = entry - atr * ATR_TP2_MULT
 
     daily_signals += 1
     stars = "🔥🔥🔥"
 
-msg = f"""🚨 *AI Signal Alert*
+    msg = f"""🚨 *AI Signal Alert*
 *Symbol:* `{sym}`
 *Signal:* {'🟢 BUY' if direction == 'Long' else '🔴 SELL'}
 *Price:* `{entry:.6f}`
@@ -128,8 +138,7 @@ msg = f"""🚨 *AI Signal Alert*
 *Strength:* {stars}
 """
 
-
-    open_positions[sym] = {"dir":direction, "sl":sl, "tp1":tp1, "tp2":tp2}
+    open_positions[sym] = {"dir": direction, "sl": sl, "tp1": tp1, "tp2": tp2}
     logging.info(f"{sym}: Signal {direction} @ {entry:.6f}")
     return msg
 
