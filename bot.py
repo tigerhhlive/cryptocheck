@@ -115,21 +115,19 @@ def analyze_symbol(sym, tf="15m"):
 
     daily_signals += 1
     stars = "🔥🔥🔥"
-    msg = (
-        f"🚨 *AI Signal Alert*
-"
-        f"*Symbol:* `{sym}`
-"
-        f"*Signal:* {'🟢 BUY' if direction=='Long' else '🔴 SELL'}
-"
-        f"*Entry:* `{entry:.6f}`
-"
-        f"*SL:* `{sl:.6f}`  *TP1:* `{tp1:.6f}`  *TP2:* `{tp2:.6f}`
-"
-        f"*EMA9:* `{last['EMA9']:.4f}`  *RSI:* `{last['RSI']:.2f}`
-"
-        f"*Strength:* {stars}"
-    )
+
+msg = f"""🚨 *AI Signal Alert*
+*Symbol:* `{sym}`
+*Signal:* {'🟢 BUY' if direction == 'Long' else '🔴 SELL'}
+*Price:* `{entry:.6f}`
+*SL:* `{sl:.6f}`  
+*TP1:* `{tp1:.6f}`  
+*TP2:* `{tp2:.6f}`
+*EMA9:* `{last['EMA9']:.4f}`
+*RSI:* `{last['RSI']:.1f}`
+*Strength:* {stars}
+"""
+
 
     open_positions[sym] = {"dir":direction, "sl":sl, "tp1":tp1, "tp2":tp2}
     logging.info(f"{sym}: Signal {direction} @ {entry:.6f}")
