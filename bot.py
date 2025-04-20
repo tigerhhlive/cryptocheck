@@ -1,8 +1,8 @@
 import os
 import time
 import logging
-import requests
 import threading
+import requests
 import pandas as pd
 import pandas_ta as ta
 from flask import Flask
@@ -10,203 +10,247 @@ from datetime import datetime
 
 app = Flask(__name__)
 
-# Environment variables
-API_KEY = os.environ.get('CRYPTOCOMPARE_API_KEY')
-TELEGRAM_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
-TELEGRAM_CHAT = os.environ.get('TELEGRAM_CHAT_ID')
+# === تنظیمات محیطی ===
+CRYPTOCOMPARE_API_KEY = os.environ['CRYPTOCOMPARE_API_KEY']
+TELEGRAM_BOT_TOKEN    = os.environ['TELEGRAM_BOT_TOKEN']
+TELEGRAM_CHAT_ID      = os.environ['TELEGRAM_CHAT_ID']
 
-# Strategy parameters
-EMA_FAST = 9
-EMA_SLOW = 15
-RSI_LEN = 14
-ATR_LEN = 14
-OB_LOOKBACK = 10     # Swing lookback for Order Block detection (bars)
-SIGNAL_COOLDOWN = 1800
-CHECK_INTERVAL = 600
+# === پارامترهای استراتژی ===
+EMA_LEN       = 9
+RSI_PERIOD    = 14        # می‌تونین غیرفعالش کنین
+OB_LOOKBACK   = 10        # طول پویوت برای Order Block
+ATR_PERIOD    = 14        # فقط برای SL/TP
+SL_ATR_MULT   = 1.0
+TP1_ATR_MULT  = 1.0
+TP2_ATR_MULT  = 2.0
+
+CHECK_INTERVAL     = 600
 HEARTBEAT_INTERVAL = 7200
-SLEEP_HOURS = (0, 7)
+SLEEP_HOURS        = (0, 7)    # تهران: بین ۰ تا ۷ صبح
 
-# State tracking
-last_signal_bar = {}
-open_positions = {}
+MIN_BARS = max(EMA_LEN, RSI_PERIOD, ATR_PERIOD, OB_LOOKBACK * 2 + 1)
 
-# Logging setup
-logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
+# === وضعیت داخلی ===
+last_signals     = {}   # cooldown per symbol+dir+bar
+open_positions   = {}   # برای گزارش روزانه
+daily_signals    = 0
+daily_wins       = 0
+daily_losses     = 0
 
+logging.basicConfig(level=logging.INFO,
+                    format='%(asctime)s %(levelname)-8s %(message)s')
 
-def send_msg(text):
-    """Send a Markdown message to Telegram chat."""
-    try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        payload = {'chat_id': TELEGRAM_CHAT, 'text': text, 'parse_mode': 'Markdown'}
-        resp = requests.post(url, json=payload)
-        if resp.status_code != 200:
-            logging.error(f"Telegram error: {resp.text}")
-    except Exception as e:
-        logging.error(f"Exception sending Telegram message: {e}")
+def send_telegram(message: str):
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": message,
+        "parse_mode": "Markdown"
+    }
+    resp = requests.post(url, json=payload, timeout=10)
+    if resp.status_code != 200:
+        logging.error(f"Telegram error: {resp.text}")
 
+def get_data(symbol: str, timeframe: str='15m') -> pd.DataFrame:
+    agg = 5 if timeframe=='5m' else 15
+    params = {
+        'fsym': symbol[:-4], 'tsym': 'USDT',
+        'limit': 60, 'aggregate': agg,
+        'api_key': CRYPTOCOMPARE_API_KEY
+    }
+    resp = requests.get("https://min-api.cryptocompare.com/data/v2/histominute",
+                        params=params, timeout=10).json()
+    data = resp['Data']['Data']
+    df = pd.DataFrame(data)
+    df['timestamp']    = pd.to_datetime(df['time'], unit='s')
+    df.rename(columns={'volumeto':'volume'}, inplace=True)
+    return df[['timestamp','open','high','low','close','volume']]
 
-def get_data(symbol, agg=15):
-    """Fetch OHLCV minute data from CryptoCompare."""
-    try:
-        url = 'https://min-api.cryptocompare.com/data/v2/histominute'
-        params = {
-            'fsym': symbol[:-4], 'tsym': 'USDT',
-            'limit': 100, 'aggregate': agg, 'api_key': API_KEY
-        }
-        res = requests.get(url, params=params, timeout=10).json()
-        data = res.get('Data', {}).get('Data', [])
-        df = pd.DataFrame(data)
-        df['time'] = pd.to_datetime(df['time'], unit='s')
-        df.set_index('time', inplace=True)
-        return df[['open', 'high', 'low', 'close', 'volumefrom', 'volumeto']]
-    except Exception as e:
-        logging.error(f"Error fetching data for {symbol}: {e}")
-        return pd.DataFrame()
+def check_cooldown(symbol: str, direction: str, bar_index: int) -> bool:
+    key = f"{symbol}_{direction}"
+    if last_signals.get(key)==bar_index:
+        return False
+    last_signals[key] = bar_index
+    return True
 
+def analyze_symbol(symbol: str, timeframe: str='15m') -> str | None:
+    """
+    تشخیص Order-Block + کراس EMA9
+    برمی‌گردونه پیام Markdown یا None
+    """
+    global daily_signals
 
-def detect_swing_highs(df):
-    df['is_swing_high'] = (df['high'].shift(1) < df['high']) & (df['high'].shift(-1) < df['high'])
-    return df[df['is_swing_high']]
+    df = get_data(symbol, timeframe)
+    if len(df) < MIN_BARS:
+        return None
 
+    # اندیکاتورها
+    df['EMA9'] = ta.ema(df['close'], length=EMA_LEN)
+    df['RSI']  = ta.rsi(df['close'], length=RSI_PERIOD)
+    df['ATR']  = ta.atr(df['high'], df['low'], df['close'], length=ATR_PERIOD)
 
-def detect_swing_lows(df):
-    df['is_swing_low'] = (df['low'].shift(1) > df['low']) & (df['low'].shift(-1) > df['low'])
-    return df[df['is_swing_low']]
+    # پیووت‌ها (Order Block)
+    df['OB_high'] = ta.pivothigh(df['high'], left=OB_LOOKBACK, right=OB_LOOKBACK)
+    df['OB_low']  = ta.pivotlow (df['low'],  left=OB_LOOKBACK, right=OB_LOOKBACK)
 
+    # می‌گیریم آخرین پیووت معتبر قبل از کندل فعلی
+    prev = df.iloc[-2]
+    curr = df.iloc[-1]
+    idx  = df.index[-1]
 
-def detect_rsi_divergence(df):
-    # Bearish divergence: price higher highs + RSI lower highs
-    sh = detect_swing_highs(df)
-    if len(sh) >= 2:
-        last = sh['high'].iloc[-2:]
-        rsi = df['RSI'].loc[last.index]
-        if last.iloc[1] > last.iloc[0] and rsi.iloc[1] < rsi.iloc[0]:
-            return 'bear'
-    # Bullish divergence: price lower lows + RSI higher lows
-    sl = detect_swing_lows(df)
-    if len(sl) >= 2:
-        lows = sl['low'].iloc[-2:]
-        rsi = df['RSI'].loc[lows.index]
-        if lows.iloc[1] < lows.iloc[0] and rsi.iloc[1] > rsi.iloc[0]:
-            return 'bull'
+    # جستجوی آخرین سطح OB_high/low
+    obh = df['OB_high'].dropna()
+    obl = df['OB_low'].dropna()
+    last_pivot_high = obh.iloc[-1] if len(obh)>0 else None
+    last_pivot_low  = obl.iloc[-1] if len(obl)>0 else None
+
+    # شرط شکست و کراس EMA و فیلتر RSI
+    signal = None
+    direction = None
+
+    # لانگ: بسته شدن کندل روی آخرین OB_low و بالای EMA9
+    if last_pivot_low is not None:
+        if prev['close'] >= last_pivot_low and curr['close'] < last_pivot_low \
+           and curr['close'] < curr['EMA9'] \
+           and curr['RSI'] < 50:
+            direction = 'Short'
+    # شورت: بسته شدن کندل زیر OB_high و زیر EMA9
+    if last_pivot_high is not None:
+        if prev['close'] <= last_pivot_high and curr['close'] > last_pivot_high \
+           and curr['close'] > curr['EMA9'] \
+           and curr['RSI'] > 50:
+            direction = 'Long'
+
+    if direction is None:
+        logging.info(f"{symbol}: No OB/EMA9 signal")
+        return None
+
+    # cooldown
+    if not check_cooldown(symbol, direction, idx):
+        return None
+
+    entry = curr['close']
+    atr   = curr['ATR']
+
+    # SL/TP
+    if direction=='Long':
+        sl  = entry - SL_ATR_MULT  * atr
+        tp1 = entry + TP1_ATR_MULT * atr
+        tp2 = entry + TP2_ATR_MULT * atr
+        emoji = "🟢 BUY"
+    else:
+        sl  = entry + SL_ATR_MULT  * atr
+        tp1 = entry - TP1_ATR_MULT * atr
+        tp2 = entry - TP2_ATR_MULT * atr
+        emoji = "🔴 SELL"
+
+    daily_signals += 1
+    open_positions[symbol] = {
+        'direction':direction, 'sl':sl, 'tp1':tp1, 'tp2':tp2
+    }
+
+    stars = "🔥🔥🔥"
+    msg = (
+        f"🚨 *This Is AI Signal Alert*\n"
+        f"*Symbol:* `{symbol}`\n"
+        f"*Signal:* {emoji} *MARKET*\n"
+        f"*Entry:* `{entry:.6f}`\n"
+        f"*Stop Loss:* `{sl:.6f}`   *TP1:* `{tp1:.6f}`   *TP2:* `{tp2:.6f}`\n"
+        f"*EMA9:* {curr['EMA9']:.4f}   *RSI:* {curr['RSI']:.1f}\n"
+        f"*Strength:* {stars}"
+    )
+    return msg
+
+def analyze_symbol_mtf(symbol: str) -> str | None:
+    """Multi-timeframe: هم ۵ دقیقه و هم ۱۵ دقیقه باید موافق باشند"""
+    m5  = analyze_symbol(symbol, '5m')
+    m15 = analyze_symbol(symbol, '15m')
+    if m5 and m15 and (("BUY" in m5 and "BUY" in m15) or ("SELL" in m5 and "SELL" in m15)):
+        return m15
     return None
 
+def check_and_alert(symbol: str):
+    logging.info(f"🔍 Checking {symbol} …")
+    msg = analyze_symbol_mtf(symbol)
+    if msg:
+        send_telegram(msg)
+        logging.info(f"✅ Sent signal for {symbol}")
 
-def analyze(symbol):
-    df = get_data(symbol, agg=15)
-    if df.empty or len(df) < max(EMA_SLOW, RSI_LEN, ATR_LEN, OB_LOOKBACK*2):
-        return
+def monitor_positions():
+    """کنترل بسته شدن پوزیشن‌ها برای گزارش روزانه"""
+    global daily_wins, daily_losses
+    while True:
+        df = None
+        for sym, pos in list(open_positions.items()):
+            df = get_data(sym, '15m')
+            last = df['close'].iloc[-1]
+            dir  = pos['direction']
+            if dir=='Long':
+                if last >= pos['tp2']:
+                    daily_wins += 1;  open_positions.pop(sym)
+                elif last <= pos['sl']:
+                    daily_losses += 1; open_positions.pop(sym)
+            else:
+                if last <= pos['tp2']:
+                    daily_wins += 1;  open_positions.pop(sym)
+                elif last >= pos['sl']:
+                    daily_losses += 1; open_positions.pop(sym)
+        time.sleep(60)
 
-    # Calculate indicators
-    df['EMA9'] = ta.ema(df['close'], length=EMA_FAST)
-    df['EMA15'] = ta.ema(df['close'], length=EMA_SLOW)
-    df['RSI'] = ta.rsi(df['close'], length=RSI_LEN)
-    df['ATR'] = ta.atr(df['high'], df['low'], df['close'], length=ATR_LEN)
-
-    last = df.iloc[-1]
-    prev = df.iloc[-2]
-
-    # EMA crossover
-    long_cross = (prev['EMA9'] < prev['EMA15'] and last['EMA9'] > last['EMA15'])
-    short_cross = (prev['EMA9'] > prev['EMA15'] and last['EMA9'] < last['EMA15'])
-    if not (long_cross or short_cross):
-        logging.info(f"{symbol}: No EMA9/15 cross")
-        return
-    direction = 'Long' if long_cross else 'Short'
-
-    # RSI divergence
-    div = detect_rsi_divergence(df)
-    if direction == 'Long' and div != 'bull':
-        logging.info(f"{symbol}: No bullish RSI divergence")
-        return
-    if direction == 'Short' and div != 'bear':
-        logging.info(f"{symbol}: No bearish RSI divergence")
-        return
-
-    # Detect Order Block
-    if direction == 'Short':
-        sh = detect_swing_highs(df)
-        if sh.empty: return
-        top = sh['high'].iloc[-1]
-        window = df.iloc[-(OB_LOOKBACK+1):-1]
-        bot = window['low'].min()
-        if not (last['close'] <= top and last['close'] >= bot):
-            logging.info(f"{symbol}: Price not in bearish OB zone [{bot:.4f}–{top:.4f}]")
-            return
-        ob_top, ob_bot = top, bot
-    else:
-        sl = detect_swing_lows(df)
-        if sl.empty: return
-        bot = sl['low'].iloc[-1]
-        window = df.iloc[-(OB_LOOKBACK+1):-1]
-        top = window['high'].max()
-        if not (last['close'] >= bot and last['close'] <= top):
-            logging.info(f"{symbol}: Price not in bullish OB zone [{bot:.4f}–{top:.4f}]")
-            return
-        ob_top, ob_bot = top, bot
-
-    # Cooldown per bar index
-    bar_idx = df.index[-1]
-    key = f"{symbol}_{direction}"
-    if last_signal_bar.get(key) == bar_idx:
-        logging.info(f"{symbol}: Cooldown active for {direction}")
-        return
-    last_signal_bar[key] = bar_idx
-
-    # Calculate SL/TP
-    entry = last['close']
-    atr = last['ATR']
-    if direction == 'Long':
-        sl = ob_bot - 0.5 * (ob_top - ob_bot)
-        tp1 = entry + atr * 1
-        tp2 = entry + atr * 2
-    else:
-        sl = ob_top + 0.5 * (ob_top - ob_bot)
-        tp1 = entry - atr * 1
-        tp2 = entry - atr * 2
-
-    # Send signal message
-    msg = (
-        f"🚨 *AI SIGNAL Alert*\n"
-        f"*{symbol}* - {'🟢 BUY' if direction=='Long' else '🔴 SELL'} @ {entry:.4f}\n"
-        f"SL: {sl:.4f} TP1: {tp1:.4f} TP2: {tp2:.4f}\n"
-        f"OB Zone: [{ob_bot:.4f}–{ob_top:.4f}]   RSI Divergence: *{div.title()}*"
+def report_daily():
+    """گزارش روزانه در ۲۳:۵۵ تهران"""
+    total = daily_wins + daily_losses
+    wr = round(daily_wins/total*100,1) if total>0 else 0.0
+    send_telegram(
+        f"📊 *Daily Performance Report*\n"
+        f"Total Signals: {daily_signals}\n"
+        f"🎯 Wins : {daily_wins}\n"
+        f"❌ Losses: {daily_losses}\n"
+        f"📈 Winrate: {wr}%"
     )
-    logging.info(f"{symbol}: Signal {direction} at {entry:.4f}")
-    send_msg(msg)
 
-
-def worker():
-    symbols = ["BTCUSDT","ETHUSDT","DOGEUSDT","BNBUSDT","XRPUSDT","ADAUSDT","XLMUSDT"]
-    logging.info("Worker started, symbols: %s", symbols)
-    # Send immediate heartbeat
-    send_msg("🤖 *Bot launched and scanning signals...*")
-    last_hb = time.time()
-
+def monitor():
+    symbols = [
+        "BTCUSDT","ETHUSDT","DOGEUSDT","BNBUSDT","XRPUSDT",
+        "RENDERUSDT","TRUMPUSUSDT","FARTCOINUSDT","XLMUSDT",
+        "SHIBUSDT","ADAUSDT","NOTUSDT","PROMUSDT","PENDLEUSDT"
+    ]
+    last_hb = 0
     while True:
         now = datetime.utcnow()
-        hr = (now.hour + 3) % 24
-        if SLEEP_HOURS[0] <= hr < SLEEP_HOURS[1]:
+        te_hr = (now.hour+3)%24; te_mn = now.minute
+
+        # خواب ربات
+        if SLEEP_HOURS[0] <= te_hr < SLEEP_HOURS[1]:
             time.sleep(60)
             continue
-        # Heartbeat every HEARTBEAT_INTERVAL
+
+        # هارت‌بیت
         if time.time() - last_hb > HEARTBEAT_INTERVAL:
-            send_msg("🤖 *Bot is live and scanning.*")
+            send_telegram("🤖 *Bot live and scanning.*")
             last_hb = time.time()
-        # Scan symbols
-        for sym in symbols:
-            logging.info(f"🔍 Checking {sym} for signal...")
-            try:
-                analyze(sym)
-            except Exception as e:
-                logging.error(f"Error in analyze({sym}): {e}")
+
+        # اسکن همه نمادها
+        threads = []
+        for s in symbols:
+            t = threading.Thread(target=check_and_alert, args=(s,))
+            t.start()
+            threads.append(t)
+        for t in threads:
+            t.join()
+
+        # گزارش روزانه
+        if te_hr==23 and te_mn>=55:
+            report_daily()
+
         time.sleep(CHECK_INTERVAL)
 
 @app.route('/')
 def home():
     return "✅ Crypto Signal Bot is running."
 
-if __name__ == '__main__':
-    threading.Thread(target=worker, daemon=True).start()
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
+if __name__=='__main__':
+    threading.Thread(target=monitor, daemon=True).start()
+    threading.Thread(target=monitor_positions, daemon=True).start()
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
