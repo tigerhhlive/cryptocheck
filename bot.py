@@ -1,3 +1,4 @@
+
 import os
 import time
 import logging
@@ -10,32 +11,30 @@ from datetime import datetime
 
 app = Flask(__name__)
 
-# — تنظیمات محیطی
+# تنظیمات محیطی
 CRYPTOCOMPARE_API_KEY = os.getenv("CRYPTOCOMPARE_API_KEY")
-TELEGRAM_BOT_TOKEN     = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID       = os.getenv("TELEGRAM_CHAT_ID")
+TELEGRAM_BOT_TOKEN    = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID      = os.getenv("TELEGRAM_CHAT_ID")
 
-# — پارامترهای استراتژی
+# پارامترهای استراتژی
 EMA_LEN        = 9
 ATR_LEN        = 14
 ATR_SL_MULT    = 1.0
 ATR_TP1_MULT   = 1.0
 ATR_TP2_MULT   = 2.0
-PIVOT_LOOKBACK = 10  # فاصله برای تشخیص swing high/low
+PIVOT_LOOKBACK = 10
 SIGNAL_COOLDOWN= 1800
 HEARTBEAT_INT  = 7200
 CHECK_INT      = 600
 MONITOR_INT    = 120
 SLEEP_HOURS    = (0, 7)
 
-# — متغیرهای دنبال‌کننده
 last_signals   = {}
 open_positions = {}
 daily_signals  = 0
 daily_wins     = 0
 daily_losses   = 0
 
-# — تنظیمات لاگ
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-5s %(message)s")
 
 def send_telegram(msg: str):
@@ -79,42 +78,32 @@ def analyze_symbol(sym, tf="15m"):
     if len(df) < PIVOT_LOOKBACK*2+5:
         return None
 
-    # محاسبه EMA9 و ATR
     df["EMA9"] = ta.ema(df["close"], length=EMA_LEN)
     df["ATR"]  = ta.atr(df["high"], df["low"], df["close"], length=ATR_LEN)
-
-    # شناسایی pivot
-    df["PH"] = pivot_high(df, PIVOT_LOOKBACK)
-    df["PL"] = pivot_low(df, PIVOT_LOOKBACK)
+    df["RSI"]  = ta.rsi(df["close"], length=14)
+    df["PH"]   = pivot_high(df, PIVOT_LOOKBACK)
+    df["PL"]   = pivot_low(df, PIVOT_LOOKBACK)
 
     last = df.iloc[-1]
     prev = df.iloc[-2]
     idx  = df.index[-1]
-
     direction = None
     entry     = last["close"]
     atr       = last["ATR"]
 
-    # بررسی OB صعودی (pivot low اخیر)
-    if prev["PL"]:
-        ob_price = prev["low"]
-        if last["close"] > last["EMA9"]:  # بسته شدن بالای EMA9
-            direction = "Long"
-    # بررسی OB نزولی (pivot high اخیر)
-    if prev["PH"]:
-        ob_price = prev["high"]
-        if last["close"] < last["EMA9"]:
-            direction = "Short"
+    if prev["PL"] and last["close"] > last["EMA9"] and last["RSI"] > 30:
+        direction = "Long"
+    elif prev["PH"] and last["close"] < last["EMA9"] and last["RSI"] < 70:
+        direction = "Short"
 
     if not direction:
-        logging.info(f"{sym}: No OB/EMA9 signal")
+        logging.info(f"{sym}: No signal")
         return None
 
     if not check_cooldown(sym, direction, idx):
         logging.info(f"{sym}: Cooldown active")
         return None
 
-    # محاسبۀ SL/TP
     if direction=="Long":
         sl  = entry - atr*ATR_SL_MULT
         tp1 = entry + atr*ATR_TP1_MULT
@@ -127,12 +116,18 @@ def analyze_symbol(sym, tf="15m"):
     daily_signals += 1
     stars = "🔥🔥🔥"
     msg = (
-        f"🚨 This Is AI Signal Alert\n"
-        f"*Symbol:* `{sym}`\n"
-        f"*Signal:* {'🟢 BUY' if direction=='Long' else '🔴 SELL'}\n"
-        f"*Price:* `{entry:.6f}`\n"
-        f"*SL:* `{sl:.6f}`  *TP1:* `{tp1:.6f}`  *TP2:* `{tp2:.6f}`\n"
-        f"*EMA9:* `{last['EMA9']:.4f}`\n"
+        f"🚨 *AI Signal Alert*
+"
+        f"*Symbol:* `{sym}`
+"
+        f"*Signal:* {'🟢 BUY' if direction=='Long' else '🔴 SELL'}
+"
+        f"*Entry:* `{entry:.6f}`
+"
+        f"*SL:* `{sl:.6f}`  *TP1:* `{tp1:.6f}`  *TP2:* `{tp2:.6f}`
+"
+        f"*EMA9:* `{last['EMA9']:.4f}`  *RSI:* `{last['RSI']:.2f}`
+"
         f"*Strength:* {stars}"
     )
 
@@ -141,7 +136,6 @@ def analyze_symbol(sym, tf="15m"):
     return msg
 
 def analyze_symbol_mtf(sym):
-    """تأیید MTF: سیگنال 5m و 15m باید هماهنگ باشند."""
     m5  = analyze_symbol(sym, "5m")
     m15 = analyze_symbol(sym, "15m")
     if m5 and m15 and (("BUY" in m5 and "BUY" in m15) or ("SELL" in m5 and "SELL" in m15)):
@@ -173,10 +167,14 @@ def report_daily():
     total = daily_wins + daily_losses
     wr    = round(daily_wins/total*100,1) if total>0 else 0
     send_telegram(
-        f"📊 *Daily Report*\n"
-        f"Signals: {daily_signals}\n"
-        f"✅ Wins: {daily_wins}\n"
-        f"❌ Losses: {daily_losses}\n"
+        f"📊 *Daily Report*
+"
+        f"Signals: {daily_signals}
+"
+        f"✅ Wins: {daily_wins}
+"
+        f"❌ Losses: {daily_losses}
+"
         f"🏆 Winrate: {wr}%"
     )
 
@@ -187,18 +185,16 @@ def monitor():
                "SHIBUSDT","ADAUSDT","NOTUSDT","PROMUSDT","PENDLEUSDT"]
     while True:
         now = datetime.utcnow()
-        hr  = (now.hour+3)%24; mn = now.minute
+        hr  = (now.hour+3)%24
+        mn  = now.minute
 
-        # خواب شبانه
         if SLEEP_HOURS[0] <= hr < SLEEP_HOURS[1]:
             time.sleep(60); continue
 
-        # heartbeat
         if time.time()-last_hb > HEARTBEAT_INT:
             send_telegram("🤖 Bot live and scanning.")
             last_hb = time.time()
 
-        # چک سیگنال همه ارزها
         threads = []
         for s in symbols:
             t = threading.Thread(target=check_and_alert, args=(s,))
@@ -207,7 +203,6 @@ def monitor():
         for t in threads:
             t.join()
 
-        # گزارش شبانه
         if hr==23 and mn>=55:
             report_daily()
 
