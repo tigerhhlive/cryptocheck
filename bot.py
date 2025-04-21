@@ -64,11 +64,11 @@ def get_data(tf: str, sym: str) -> pd.DataFrame:
         logging.error(f"Request error for {sym}: {e}")
         return None
     if j.get("Response") != "Success":
-        logging.error(f"API error for {sym}: {j}")
+        logging.error(f"API error for {sym}: {j.get('Message')} ({j.get('Type')})")
         return None
     raw = j.get("Data", {}).get("Data", [])
     if not raw:
-        logging.error(f"No data points for {sym}: {j}")
+        logging.error(f"No data points for {sym}")
         return None
     df = pd.DataFrame(raw)
     df["timestamp"] = pd.to_datetime(df["time"], unit="s")
@@ -145,7 +145,6 @@ def analyze_symbol(sym, tf="15m"):
         return None
 
     if not check_cooldown(sym, direction or "early", idx):
-        logging.info(f"{sym}: Cooldown active")
         return None
 
     if early:
@@ -165,7 +164,6 @@ def analyze_symbol(sym, tf="15m"):
         sl = entry + atr_val*ATR_SL_MULT; tp1 = entry - atr_val*ATR_TP1_MULT; tp2 = entry - atr_val*ATR_TP2_MULT
 
     daily_signals += 1
-    stars = "🔥🔥🔥"
     msg = (
         f"🚨 *AI Signal Alert*\n"
         f"*Symbol:* `{sym}`\n"
@@ -175,15 +173,13 @@ def analyze_symbol(sym, tf="15m"):
         f"*SL:* `{sl:.6f}`  *TP1:* `{tp1:.6f}`  *TP2:* `{tp2:.6f}`\n"
         f"*EMA9:* `{last['EMA9']:.4f}`  |  *RSI:* `{rsiVal:.2f}`\n"
         f"{accuracy}\n"
-        f"*Strength:* {stars}"
+        f"*Strength:* 🔥🔥🔥"
     )
     open_positions[sym] = {"dir": direction, "sl": sl, "tp1": tp1, "tp2": tp2}
-    logging.info(f"{sym}: Signal {direction} @ {entry:.6f}")
     return msg
 
 # ───── Alert Routine ─────
 def check_and_alert(sym):
-    logging.info(f"🔍 Checking {sym}...")
     msg = analyze_symbol(sym, "15m")
     if msg:
         send_telegram(msg)
@@ -196,10 +192,9 @@ def monitor_positions():
             df = get_data("15m", sym)
             if df is None: continue
             price = df["close"].iloc[-1]
-            d = pos["dir"]
-            if (d=="Long" and price>=pos["tp2"]) or (d=="Short" and price<=pos["tp2"]):
+            if (pos["dir"]=="Long" and price>=pos["tp2"]) or (pos["dir"]=="Short" and price<=pos["tp2"]):
                 daily_wins += 1; del open_positions[sym]
-            elif (d=="Long" and price<=pos["sl"]) or (d=="Short" and price>=pos["sl"]):
+            elif (pos["dir"]=="Long" and price<=pos["sl"]) or (pos["dir"]=="Short" and price>=pos["sl"]):
                 daily_losses += 1; del open_positions[sym]
         time.sleep(MONITOR_INT)
 
@@ -221,20 +216,16 @@ def monitor():
     symbols = [
         "BTCUSDT","ETHUSDT","DOGEUSDT","BNBUSDT","XRPUSDT",
         "RENDERUSDT","TRUMPUSDT","FARTCOINUSDT","XLMUSDT",
-        "SHIBUSDT","ADAUSDT","NOTUSUT","PROMUSPTUSDT","PENDLEUSDT"
+        "SHIBUSDT","ADAUSDT","NOTUSDT","PROMUSDT","PENDLEUSDT"
     ]
     while True:
         now = datetime.utcnow()
-        hr = (now.hour+3)%24; mn = now.minute
-        if SLEEP_HOURS[0] <= hr < SLEEP_HOURS[1]:
-            time.sleep(60); continue
-        if time.time()-last_hb > HEARTBEAT_INT:
-            send_telegram("🤖 Bot live and scanning.")
-            last_hb = time.time()
-        threads = []
+        hr, mn = (now.hour+3)%24, now.minute
+        if SLEEP_HOURS[0] <= hr < SLEEP_HOURS[1]: time.sleep(60); continue
+        if time.time()-last_hb > HEARTBEAT_INT: send_telegram("🤖 Bot live and scanning."); last_hb=time.time()
+        threads=[]
         for s in symbols:
-            t = threading.Thread(target=check_and_alert, args=(s,))
-            t.start(); threads.append(t)
+            t=threading.Thread(target=check_and_alert,args=(s,)); t.start(); threads.append(t)
         for t in threads: t.join()
         if hr==23 and mn>=55: report_daily()
         time.sleep(CHECK_INT)
@@ -243,6 +234,6 @@ def monitor():
 def home(): return "✅ Crypto Signal Bot is running."
 
 if __name__=="__main__":
-    threading.Thread(target=monitor, daemon=True).start()
-    threading.Thread(target=monitor_positions, daemon=True).start()
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT",8080)))
+    threading.Thread(target=monitor,daemon=True).start()
+    threading.Thread(target=monitor_positions,daemon=True).start()
+    app.run(host="0.0.0.0",port=int(os.getenv("PORT",8080)))
