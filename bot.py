@@ -134,10 +134,10 @@ def analyze_symbol(sym, tf="15m"):  # Analyze with detailed debug
     early = False
 
     # Normal Mode
-    if prev["PL"] and entry > last["EMA9"] and rsiVal > RSI_BUY_LVL:
+    if last["PL"] and entry > last["EMA9"] and rsiVal > RSI_BUY_LVL:
         direction = "Long"; ob_type = "Bull OB"; accuracy = "🎯 Accuracy: High"
         logging.debug(f"Normal LONG signal condition met for {sym}")
-    elif prev["PH"] and entry < last["EMA9"] and rsiVal < RSI_SELL_LVL:
+    elif last["PH"] and entry < last["EMA9"] and rsiVal < RSI_SELL_LVL:
         direction = "Short"; ob_type = "Bear OB"; accuracy = "🎯 Accuracy: High"
         logging.debug(f"Normal SHORT signal condition met for {sym}")
     # Smart Mode
