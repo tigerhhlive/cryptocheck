@@ -63,14 +63,12 @@ def get_data(tf: str, sym: str) -> pd.DataFrame:
 
 # ───── Indicators ─────
 def pivot_high(df, lb):
-    ph = df['high'].rolling(window=lb*2+1, center=True) \
-             .apply(lambda x: 1 if x.iloc[lb] == x.max() else 0)
-    return ph == 1
+    return df['high'].rolling(window=lb*2+1, center=True) \
+             .apply(lambda x: x.iloc[lb] == x.max()).fillna(False)
 
 def pivot_low(df, lb):
-    pl = df['low'].rolling(window=lb*2+1, center=True) \
-             .apply(lambda x: 1 if x.iloc[lb] == x.min() else 0)
-    return pl == 1
+    return df['low'].rolling(window=lb*2+1, center=True) \
+             .apply(lambda x: x.iloc[lb] == x.min()).fillna(False)
 
 def rsi(series, length):
     delta = series.diff()
@@ -102,6 +100,7 @@ def analyze_symbol(sym, tf="15m"):
     df["PH"]   = pivot_high(df, PIVOT_LOOKBACK)
     df["PL"]   = pivot_low(df, PIVOT_LOOKBACK)
 
+    prev = df.iloc[-2]
     last = df.iloc[-1]
     idx  = df.index[-1]
     entry = last["close"]
@@ -112,29 +111,29 @@ def analyze_symbol(sym, tf="15m"):
     accuracy = None
     early = False
 
-    # Normal Mode: strict
-    if last["PL"] and entry > last["EMA9"] and rsiVal > RSI_BUY_LVL:
+    # Normal Mode: strict on prev pivot
+    if prev["PL"] and entry > last["EMA9"] and rsiVal > RSI_BUY_LVL:
         direction = "Long"
         ob_type = "Bull OB"
         accuracy = "🎯 Accuracy: High"
-    elif last["PH"] and entry < last["EMA9"] and rsiVal < RSI_SELL_LVL:
+    elif prev["PH"] and entry < last["EMA9"] and rsiVal < RSI_SELL_LVL:
         direction = "Short"
         ob_type = "Bear OB"
         accuracy = "🎯 Accuracy: High"
     # Smart Mode: near threshold
-    elif last["PL"] and entry > last["EMA9"] and RSI_BUY_LVL - 2 < rsiVal <= RSI_BUY_LVL:
+    elif prev["PL"] and entry > last["EMA9"] and RSI_BUY_LVL - 2 < rsiVal <= RSI_BUY_LVL:
         direction = "Long"
         ob_type = "Bull OB"
         accuracy = "⚠️ Accuracy: Medium"
-    elif last["PH"] and entry < last["EMA9"] and RSI_SELL_LVL <= rsiVal < RSI_SELL_LVL + 2:
+    elif prev["PH"] and entry < last["EMA9"] and RSI_SELL_LVL <= rsiVal < RSI_SELL_LVL + 2:
         direction = "Short"
         ob_type = "Bear OB"
         accuracy = "⚠️ Accuracy: Medium"
-    # Early Signal: OB + EMA but RSI not OK
-    elif last["PL"] and entry > last["EMA9"]:
+    # Early Signal: prev pivot + EMA
+    elif prev["PL"] and entry > last["EMA9"]:
         ob_type = "Bull OB"
         early = True
-    elif last["PH"] and entry < last["EMA9"]:
+    elif prev["PH"] and entry < last["EMA9"]:
         ob_type = "Bear OB"
         early = True
     else:
@@ -159,7 +158,7 @@ def analyze_symbol(sym, tf="15m"):
         return msg
 
     # Targets & SL
-    atr_val = df["high"].rolling(ATR_LEN).mean()[-1]  # fallback ATR
+    atr_val = df['high'].rolling(ATR_LEN).mean().iloc[-1]
     if direction == "Long":
         sl  = entry - atr_val * ATR_SL_MULT
         tp1 = entry + atr_val * ATR_TP1_MULT
