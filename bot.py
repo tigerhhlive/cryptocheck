@@ -4,7 +4,7 @@ import logging
 import threading
 import requests
 import pandas as pd
-from flask import Flask
+from flask import Flask, request
 from datetime import datetime
 
 app = Flask(__name__)
@@ -141,7 +141,6 @@ def analyze_symbol(sym, tf="15m"):
     elif prev["PH"] and entry < last["EMA9"]:
         ob_type = "Bear OB"; early = True
     else:
-        logging.info(f"{sym}: No OB/EMA/RSI signal")
         return None
 
     if not check_cooldown(sym, direction or "early", idx):
@@ -183,6 +182,8 @@ def check_and_alert(sym):
     msg = analyze_symbol(sym, "15m")
     if msg:
         send_telegram(msg)
+        return msg
+    return None
 
 # ───── Position Monitoring ─────
 def monitor_positions():
@@ -192,10 +193,8 @@ def monitor_positions():
             df = get_data("15m", sym)
             if df is None: continue
             price = df["close"].iloc[-1]
-            if (pos["dir"]=="Long" and price>=pos["tp2"]) or (pos["dir"]=="Short" and price<=pos["tp2"]):
-                daily_wins += 1; del open_positions[sym]
-            elif (pos["dir"]=="Long" and price<=pos["sl"]) or (pos["dir"]=="Short" and price>=pos["sl"]):
-                daily_losses += 1; del open_positions[sym]
+            if (pos["dir"]=="Long" and price>=pos["tp2"]) or (pos["dir"]=="Short" and price<=pos["tp2"]): daily_wins += 1; del open_positions[sym]
+            elif (pos["dir"]=="Long" and price<=pos["sl"]) or (pos["dir"]=="Short" and price>=pos["sl"]): daily_losses += 1; del open_positions[sym]
         time.sleep(MONITOR_INT)
 
 # ───── Daily Report ─────
@@ -210,40 +209,22 @@ def report_daily():
         f"🏆 Winrate: {wr}%"
     )
 
-# ───── Main Monitor ─────
-def monitor():
-    last_hb = 0
-    symbols = [
-        "BTCUSDT","ETHUSDT","DOGEUSDT","BNBUSDT","XRPUSDT",
-        "RENDERUSDT","TRUMPUSDT","FARTCOINUSDT","XLMUSDT",
-        "SHIBUSDT","ADAUSDT","NOTUSDT","PROMUSDT","PENDLEUSDT"
-    ]
-    while True:
-        now = datetime.utcnow()
-        hr, mn = (now.hour+3)%24, now.minute
-        if SLEEP_HOURS[0] <= hr < SLEEP_HOURS[1]: time.sleep(60); continue
-        if time.time()-last_hb > HEARTBEAT_INT: send_telegram("🤖 Bot live and scanning."); last_hb=time.time()
-        threads=[]
-        for s in symbols:
-            t=threading.Thread(target=check_and_alert,args=(s,)); t.start(); threads.append(t)
-        for t in threads: t.join()
-        if hr==23 and mn>=55: report_daily()
-        time.sleep(CHECK_INT)
-
+# ───── HTTP Endpoints ─────
 @app.route("/")
-def home(): return "✅ Crypto Signal Bot is running."
+def home():
+    return "✅ Crypto Signal Bot is running."
 
+@app.route("/check", methods=["GET"])
+def manual_check():
+    symbol = request.args.get("symbol", "ETHUSDT").upper()
+    result = check_and_alert(symbol)
+    if result:
+        return result, 200
+    return f"No signal for {symbol}", 200
+
+# ───── Main Operation ─────
 if __name__=="__main__":
-    threading.Thread(target=monitor,daemon=True).start()
-    threading.Thread(target=monitor_positions,daemon=True).start()
-    app.run(host="0.0.0.0",port=int(os.getenv("PORT",8080)))
-
-# در انتهای فایل یا در یک سلول جداگانه
-if __name__ == "__main__":
-    # فقط یک بار ETH رو آنالیز کن و نتیجه رو چاپ کن
-    res = analyze_symbol("ETHUSDT", "15m")
-    if res:
-        print("🚨 Signal Found:\n", res)
-    else:
-        print("No signal for ETHUSDT right now.")
-
+    threading.Thread(target=lambda: [monitor_positions(), None][0], daemon=True).start()
+    threading.Thread(target=lambda: [monitor(), None][0], daemon=True).start()
+    port = int(os.getenv("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)
