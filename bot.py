@@ -37,7 +37,7 @@ daily_signals  = 0
 daily_wins     = 0
 daily_losses   = 0
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-5s %(message)s")
+logging.basicConfig(level=logging.DEBUG, format="%(asctime)s %(levelname)-5s %(message)s")  # Set DEBUG level for detailed tracings %(levelname)-5s %(message)s")
 
 # ───── Telegram Sender ─────
 def send_telegram(msg: str):
@@ -52,6 +52,7 @@ def send_telegram(msg: str):
 
 # ───── Data Fetching ─────
 def get_data(tf: str, sym: str) -> pd.DataFrame:
+    """Fetch OHLCV data with debug logging."""
     agg = 5 if tf == "5m" else 15
     try:
         response = requests.get(
@@ -60,6 +61,7 @@ def get_data(tf: str, sym: str) -> pd.DataFrame:
             timeout=10
         )
         j = response.json()
+        logging.debug(f"get_data raw response for {sym}: {j}")
     except Exception as e:
         logging.error(f"Request error for {sym}: {e}")
         return None
@@ -74,7 +76,10 @@ def get_data(tf: str, sym: str) -> pd.DataFrame:
     df["timestamp"] = pd.to_datetime(df["time"], unit="s")
     df.set_index("timestamp", inplace=True)
     df[["open","high","low","close","vol"]] = df[["open","high","low","close","volumeto"]]
-    return df[["open","high","low","close","vol"]]
+    logging.debug(f"get_data prepared DataFrame for {sym}, length: {len(df)}")
+    return df
+
+# ───── Indicators ─────[["open","high","low","close","vol"]]
 
 # ───── Indicators ─────
 def pivot_high(df, lb):
@@ -103,7 +108,55 @@ def check_cooldown(sym, direction, idx):
     return True
 
 # ───── Signal Analysis ─────
-def analyze_symbol(sym, tf="15m"):
+def analyze_symbol(sym, tf="15m"):  # Analyze with detailed debug
+    global daily_signals
+    logging.debug(f"Analyzing {sym} on timeframe {tf}")
+    df = get_data(tf, sym)
+    if df is None or len(df) < PIVOT_LOOKBACK*2 + 5:
+        logging.debug(f"Not enough data for {sym}: {None if df is None else len(df)} rows")
+        return None
+    # Compute indicators
+    df["EMA9"] = df["close"].ewm(span=EMA_LEN, adjust=False).mean()
+    df["RSI"]  = rsi(df["close"], RSI_LEN)
+    df["PH"]   = pivot_high(df, PIVOT_LOOKBACK)
+    df["PL"]   = pivot_low(df, PIVOT_LOOKBACK)
+    # Log last values
+    prev = df.iloc[-2]
+    last = df.iloc[-1]
+    logging.debug(f"Prev bar for {sym}: PL={prev['PL']}, PH={prev['PH']}")
+    logging.debug(f"Last bar for {sym}: close={last['close']}, EMA9={last['EMA9']}, RSI={last['RSI']}")
+    idx  = last.name
+    entry = last["close"]
+    rsiVal = last["RSI"]
+    direction = None
+    ob_type = None
+    accuracy = None
+    early = False
+
+    # Normal Mode
+    if prev["PL"] and entry > last["EMA9"] and rsiVal > RSI_BUY_LVL:
+        direction = "Long"; ob_type = "Bull OB"; accuracy = "🎯 Accuracy: High"
+        logging.debug(f"Normal LONG signal condition met for {sym}")
+    elif prev["PH"] and entry < last["EMA9"] and rsiVal < RSI_SELL_LVL:
+        direction = "Short"; ob_type = "Bear OB"; accuracy = "🎯 Accuracy: High"
+        logging.debug(f"Normal SHORT signal condition met for {sym}")
+    # Smart Mode
+    elif prev["PL"] and entry > last["EMA9"] and RSI_BUY_LVL-2 < rsiVal <= RSI_BUY_LVL:
+        direction = "Long"; ob_type = "Bull OB"; accuracy = "⚠️ Accuracy: Medium"
+        logging.debug(f"Smart LONG signal condition met for {sym}")
+    elif prev["PH"] and entry < last["EMA9"] and RSI_SELL_LVL <= rsiVal < RSI_SELL_LVL+2:
+        direction = "Short"; ob_type = "Bear OB"; accuracy = "⚠️ Accuracy: Medium"
+        logging.debug(f"Smart SHORT signal condition met for {sym}")
+    # Early Signal
+    elif prev["PL"] and entry > last["EMA9"]:
+        ob_type = "Bull OB"; early = True
+        logging.debug(f"Early LONG potential for {sym}")
+    elif prev["PH"] and entry < last["EMA9"]:
+        ob_type = "Bear OB"; early = True
+        logging.debug(f"Early SHORT potential for {sym}")
+    else:
+        logging.debug(f"No OB/EMA condition met for {sym}")
+        return None
     global daily_signals
     df = get_data(tf, sym)
     if df is None or len(df) < PIVOT_LOOKBACK*2 + 5:
