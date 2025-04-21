@@ -49,17 +49,34 @@ def send_telegram(msg: str):
 
 # ───── Data Fetching ─────
 def get_data(tf: str, sym: str) -> pd.DataFrame:
+    """
+    Fetch OHLCV data for the given symbol and timeframe using CryptoCompare API.
+    Returns a DataFrame with columns [open, high, low, close, vol] or None on error.
+    """
     agg = 5 if tf == "5m" else 15
-    res = requests.get(
-        "https://min-api.cryptocompare.com/data/v2/histominute",
-        params={"fsym": sym[:-4], "tsym": "USDT", "limit": 100, "aggregate": agg, "api_key": CRYPTOCOMPARE_API_KEY},
-        timeout=10
-    ).json()
-    df = pd.DataFrame(res["Data"]["Data"])
+    try:
+        response = requests.get(
+            "https://min-api.cryptocompare.com/data/v2/histominute",
+            params={"fsym": sym[:-4], "tsym": "USDT", "limit": 100, "aggregate": agg, "api_key": CRYPTOCOMPARE_API_KEY},
+            timeout=10
+        )
+        j = response.json()
+    except Exception as e:
+        logging.error(f"Request error for {sym}: {e}")
+        return None
+    # Check API response
+    if j.get("Response") != "Success":
+        logging.error(f"API error for {sym}: {j}")
+        return None
+    raw = j.get("Data", {}).get("Data", [])
+    if not raw:
+        logging.error(f"No data points for {sym}: {j}")
+        return None
+    df = pd.DataFrame(raw)
     df["timestamp"] = pd.to_datetime(df["time"], unit="s")
     df.set_index("timestamp", inplace=True)
-    df[["open","high","low","close","vol"]] = df[["open","high","low","close","volumeto"]]
-    return df[["open","high","low","close","vol"]]
+    df[["open", "high", "low", "close", "vol"]] = df[["open", "high", "low", "close", "volumeto"]]
+    return df[["open", "high", "low", "close", "vol"]]
 
 # ───── Indicators ─────
 def pivot_high(df, lb):
@@ -198,6 +215,7 @@ def monitor_positions():
     while True:
         for sym, pos in list(open_positions.items()):
             df = get_data("15m", sym)
+            if df is None: continue
             price = df["close"].iloc[-1]
             d = pos["dir"]
             if (d == "Long" and price >= pos["tp2"]) or (d == "Short" and price <= pos["tp2"]):
@@ -226,7 +244,7 @@ def monitor():
     symbols = [
         "BTCUSDT","ETHUSDT","DOGEUSDT","BNBUSDT","XRPUSDT",
         "RENDERUSDT","TRUMPUSDT","FARTCOINUSDT","XLMUSDT",
-        "SHIBUSDT","ADAUSDT","NOTUSDT","PROMUSPTUSDT","PENDLEUSDT"
+        "SHIBUSDT","ADAUSDT","NOTUSUT","PROMUSPTUSDT","PENDLEUSDT"
     ]
     while True:
         now = datetime.utcnow()
