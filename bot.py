@@ -68,12 +68,8 @@ def pivot_low(df, lb):
     pl = df['low'].rolling(window=lb*2+1, center=True).apply(lambda x: 1 if x.iloc[lb]==x.min() else 0)
     return pl == 1
 
-
+# 🔧 Cooldown غیرفعال برای تست
 def check_cooldown(sym, direction, idx):
-    key = f"{sym}_{direction}"
-    if last_signals.get(key)==idx:
-        return False
-    last_signals[key]=idx
     return True
 
 def analyze_symbol(sym, tf="15m"):
@@ -89,16 +85,14 @@ def analyze_symbol(sym, tf="15m"):
     df["PL"]   = pivot_low(df, PIVOT_LOOKBACK)
 
     last = df.iloc[-1]
-    prev = df.iloc[-2]
     idx  = df.index[-1]
-
     direction, entry, rsiVal, atr = None, last["close"], last["RSI"], last["ATR"]
     early = False
 
-    if prev["PL"] and last["close"] > last["EMA9"]:
+    if last["PL"] and last["close"] > last["EMA9"]:
         direction = "Long" if rsiVal > RSI_BUY_LVL else None
         early = True if direction is None else False
-    elif prev["PH"] and last["close"] < last["EMA9"]:
+    elif last["PH"] and last["close"] < last["EMA9"]:
         direction = "Short" if rsiVal < RSI_SELL_LVL else None
         early = True if direction is None else False
     else:
@@ -145,18 +139,9 @@ def analyze_symbol(sym, tf="15m"):
     logging.info(f"{sym}: Signal {direction} @ {entry:.6f}")
     return msg
 
-def analyze_symbol_mtf(sym):
-    m5  = analyze_symbol(sym, "5m")
-    m15 = analyze_symbol(sym, "15m")
-    if m5 and m15 and (("BUY" in m5 and "BUY" in m15) or ("SELL" in m5 and "SELL" in m15)):
-        return m15
-    if "Early" in str(m5) or "Early" in str(m15):
-        return m5 or m15
-    return None
-
 def check_and_alert(sym):
     logging.info(f"🔍 Checking {sym}...")
-    msg = analyze_symbol_mtf(sym)
+    msg = analyze_symbol(sym, "15m")  # بدون MTF
     if msg:
         send_telegram(msg)
 
