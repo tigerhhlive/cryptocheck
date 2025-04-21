@@ -222,6 +222,39 @@ def manual_check():
         return result, 200
     return f"No signal for {symbol}", 200
 
+# ───── Main Monitor Loop ─────
+def monitor():
+    last_hb = 0
+    symbols = [
+        "BTCUSDT","ETHUSDT","DOGEUSDT","BNBUSDT","XRPUSDT",
+        "RENDERUSDT","TRUMPUSDT","FARTCOINUSDT","XLMUSDT",
+        "SHIBUSDT","ADAUSDT","NOTUSDT","PROMUSDT","PENDLEUSDT"
+    ]
+    while True:
+        now = datetime.utcnow()
+        hr = (now.hour + 3) % 24
+        mn = now.minute
+        # Sleep hours
+        if SLEEP_HOURS[0] <= hr < SLEEP_HOURS[1]:
+            time.sleep(60)
+            continue
+        # Heartbeat
+        if time.time() - last_hb > HEARTBEAT_INT:
+            send_telegram("🤖 Bot live and scanning.")
+            last_hb = time.time()
+        # Check symbols in parallel
+        threads = []
+        for s in symbols:
+            t = threading.Thread(target=check_and_alert, args=(s,))
+            t.start()
+            threads.append(t)
+        for t in threads:
+            t.join()
+        # Daily report at 23:55
+        if hr == 23 and mn >= 55:
+            report_daily()
+        time.sleep(CHECK_INT)
+
 # ───── Main Operation ─────
 if __name__=="__main__":
     threading.Thread(target=lambda: [monitor_positions(), None][0], daemon=True).start()
