@@ -237,3 +237,13 @@ if __name__=="__main__":
     threading.Thread(target=monitor,daemon=True).start()
     threading.Thread(target=monitor_positions,daemon=True).start()
     app.run(host="0.0.0.0",port=int(os.getenv("PORT",8080)))
+
+# در انتهای فایل یا در یک سلول جداگانه
+if __name__ == "__main__":
+    # فقط یک بار ETH رو آنالیز کن و نتیجه رو چاپ کن
+    res = analyze_symbol("ETHUSDT", "15m")
+    if res:
+        print("🚨 Signal Found:\n", res)
+    else:
+        print("No signal for ETHUSDT right now.")
+
