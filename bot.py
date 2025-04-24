@@ -43,6 +43,7 @@ logging.getLogger("requests").setLevel(logging.WARNING)
 
 # ───── Telegram Sender ─────
 def send_telegram(msg: str):
+    logging.info(f"📨 Sending message to Telegram:\n{msg}")
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"}
     try:
@@ -75,15 +76,16 @@ def get_data(tf: str, sym: str) -> pd.DataFrame:
     df["timestamp"] = pd.to_datetime(df["time"], unit="s")
     df.set_index("timestamp", inplace=True)
     df.rename(columns={"volumeto": "vol"}, inplace=True)
+    logging.info(f"✅ Fetched {len(df)} bars for {sym} ({tf}) from {df.index.min()} to {df.index.max()}")
     return df[["open","high","low","close","vol"]]
 
 # ───── Indicators ─────
 def pivot_high(df, lb):
-    return df["high"].rolling(lb*2+1, center=True).apply(lambda x: x.iloc[lb]==x.max()).fillna(False)
-
+    return df["high"].rolling(lb*2+1, center=True) \
+             .apply(lambda x: x.iloc[lb]==x.max()).fillna(False)
 def pivot_low(df, lb):
-    return df["low"].rolling(lb*2+1, center=True).apply(lambda x: x.iloc[lb]==x.min()).fillna(False)
-
+    return df["low"].rolling(lb*2+1, center=True) \
+             .apply(lambda x: x.iloc[lb]==x.min()).fillna(False)
 def rsi(series, length):
     delta = series.diff()
     gain = delta.clip(lower=0)
@@ -104,8 +106,10 @@ def check_cooldown(sym, direction, idx):
 # ───── Signal Analysis ─────
 def analyze_symbol(sym, tf="15m"):
     global daily_signals
+    logging.info(f"🔍 Analyzing {sym} on {tf}")
     df = get_data(tf, sym)
     if df is None or len(df)<PIVOT_LOOKBACK*2+1:
+        logging.info(f"❌ Insufficient data for {sym}")
         return None
     df["EMA9"] = df["close"].ewm(span=EMA_LEN, adjust=False).mean()
     df["RSI"]  = rsi(df["close"], RSI_LEN)
@@ -132,13 +136,15 @@ def analyze_symbol(sym, tf="15m"):
     elif prev["PH"] and entry<last["EMA9"]:
         early, ob_type = True, "Bear OB"
     else:
+        logging.info(f"— No valid OB/EMA signal for {sym}")
         return None
 
     if not check_cooldown(sym, direction or "early", idx):
+        logging.info(f"⏱️ Cooldown active for {sym}")
         return None
 
     if early:
-        return (
+        msg = (
             f"🟡 *Early Signal Alert*\n"
             f"*Symbol:* `{sym}`\n"
             f"*Potential:* {'🟢 BUY' if ob_type=='Bull OB' else '🔴 SELL'}\n"
@@ -146,10 +152,13 @@ def analyze_symbol(sym, tf="15m"):
             f"*OB Type:* {ob_type}\n"
             f"🔍 Waiting RSI confirmation..."
         )
+        logging.info(f"ℹ️ Early signal prepared for {sym}")
+        return msg
 
-    tr = pd.concat([df["high"]-df["low"],
-                    (df["high"]-df["close"].shift()).abs(),
-                    (df["low"]-df["close"].shift()).abs()],axis=1).max(axis=1)
+    tr = pd.concat([
+        df["high"]-df["low"],
+        (df["high"]-df["close"].shift()).abs(),
+        (df["low"]-df["close"].shift()).abs()],axis=1).max(axis=1)
     atr_val = tr.rolling(ATR_LEN).mean().iloc[-1]
 
     if direction=="Long":
@@ -161,9 +170,9 @@ def analyze_symbol(sym, tf="15m"):
         tp1= entry-ATR_TP1_MULT*atr_val
         tp2= entry-ATR_TP2_MULT*atr_val
 
-    open_positions[sym]={"dir":direction,"sl":sl,"tp1":tp1,"tp2":tp2}
-    daily_signals+=1
-    return (
+    open_positions[sym] = {"dir":direction,"sl":sl,"tp1":tp1,"tp2":tp2}
+    daily_signals += 1
+    msg = (
         f"🚨 *AI Signal Alert*\n"
         f"*Symbol:* `{sym}`\n"
         f"*Signal:* {'🟢 BUY' if direction=='Long' else '🔴 SELL'}\n"
@@ -171,13 +180,17 @@ def analyze_symbol(sym, tf="15m"):
         f"*Price:* `{entry:.6f}`\n"
         f"*SL:* `{sl:.6f}`  *TP1:* `{tp1:.6f}`  *TP2:* `{tp2:.6f}`"
     )
+    logging.info(f"✅ Final signal for {sym}: {direction} at {entry:.6f}")
+    return msg
 
 # ───── Alert Routine ─────
 def check_and_alert(sym):
-    logging.info(f"🔍 Checking {sym} (15m only)...")
+    logging.info(f"▶️ Checking {sym} (15m only)...")
     msg = analyze_symbol(sym, "15m")
     if msg:
         send_telegram(msg)
+    else:
+        logging.info(f"❌ No signal for {sym}")
     return msg
 
 # ───── Position Monitoring ─────
@@ -200,6 +213,7 @@ def monitor_positions():
 def report_daily():
     total=daily_wins+daily_losses
     wr=round(daily_wins/total*100,1) if total>0 else 0
+    logging.info("🗒️ Sending daily report")
     send_telegram(
         f"📊 *Daily Report*\n"
         f"Signals: {daily_signals}\n"
@@ -225,37 +239,43 @@ def monitor():
     symbols=[
         "BTCUSDT","ETHUSDT","DOGEUSDT","BNBUSDT","XRPUSDT",
         "RENDERUSDT","TRUMPUSPTUSDT","FARTCOINUSDT","XLMUSDT",
-        "SHIBUSDT","ADAUSDT","NOTUSDT","PROMUSDT","PENDLEUSDT",
-        "CETUSUSDT","MAGICUSDT","SOLVUSDT","ENAUSDT",
+        "SHIBUSDT","ADAUSDT","NOTUSDT","PROMUSMT","PENDLEUSDT"
     ]
     while True:
-        # sync to next 15-min candle close
         now=datetime.utcnow()
         mins=now.minute%15; secs=now.second
         wait_sec=(15-mins)*60-secs+2
+        logging.info(f"⏳ Waiting {wait_sec}s until next 15m candle close")
         time.sleep(wait_sec)
 
-        # skip sleep hours
         hr=(datetime.utcnow().hour+3)%24; mn=datetime.utcnow().minute
-        if SLEEP_HOURS[0]<=hr< SLEEP_HOURS[1]: continue
+        if SLEEP_HOURS[0]<=hr<SLEEP_HOURS[1]:
+            logging.info(f"😴 Within sleep hours ({hr}), skipping cycle")
+            continue
 
-        # heartbeat
         if time.time()-last_hb>HEARTBEAT_INT:
+            logging.info("💓 Heartbeat: bot is alive")
             send_telegram("🤖 Bot live and scanning.")
             last_hb=time.time()
 
         threads=[]
+        logging.info("🚀 Starting symbol checks...")
         for s in symbols:
             t=threading.Thread(target=check_and_alert,args=(s,))
             t.start(); threads.append(t)
         for t in threads: t.join()
+        logging.info("✅ Cycle complete")
 
-        # daily report
-        if hr==23 and mn>=55: report_daily()
+        if hr==23 and mn>=55:
+            report_daily()
 
 # ───── Main Operation ─────
 if __name__=="__main__":
-    threading.Thread(target=monitor_positions,daemon=True).start()
-    threading.Thread(target=monitor,daemon=True).start()
-    port=int(os.getenv("PORT",8080))
-    app.run(host="0.0.0.0",port=port)
+    # Notify on deployment
+    send_telegram("🚀 Bot deployed and starting monitoring.")
+    # Start background threads
+    threading.Thread(target=monitor_positions, daemon=True).start()
+    threading.Thread(target=monitor, daemon=True).start()
+    port = int(os.getenv("PORT", 8080))
+    logging.info(f"🔌 Starting Flask on port {port}")
+    app.run(host="0.0.0.0", port=port)
