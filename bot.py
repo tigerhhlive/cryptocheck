@@ -5,7 +5,7 @@ import threading
 import requests
 import pandas as pd
 from flask import Flask, request
-from datetime import datetime
+from datetime import datetime, timedelta
 
 app = Flask(__name__)
 
@@ -26,9 +26,8 @@ RSI_SELL_LVL    = 70
 PIVOT_LOOKBACK  = 5
 SIGNAL_COOLDOWN = 1800
 HEARTBEAT_INT   = 7200
-CHECK_INT       = 600
 MONITOR_INT     = 120
-SLEEP_HOURS     = (0, 7)
+SLEEP_HOURS     = (0, 7)  # UTC+3 hours sleep window
 
 # ───── Tracking ─────
 last_signals   = {}
@@ -80,12 +79,10 @@ def get_data(tf: str, sym: str) -> pd.DataFrame:
 
 # ───── Indicators ─────
 def pivot_high(df, lb):
-    return df["high"].rolling(window=lb*2+1, center=True) \
-             .apply(lambda x: x.iloc[lb] == x.max()).fillna(False)
+    return df["high"].rolling(lb*2+1, center=True).apply(lambda x: x.iloc[lb]==x.max()).fillna(False)
 
 def pivot_low(df, lb):
-    return df["low"].rolling(window=lb*2+1, center=True) \
-             .apply(lambda x: x.iloc[lb] == x.min()).fillna(False)
+    return df["low"].rolling(lb*2+1, center=True).apply(lambda x: x.iloc[lb]==x.min()).fillna(False)
 
 def rsi(series, length):
     delta = series.diff()
@@ -93,47 +90,46 @@ def rsi(series, length):
     loss = -delta.clip(upper=0)
     avg_gain = gain.rolling(length).mean()
     avg_loss = loss.rolling(length).mean()
-    rs = avg_gain / avg_loss
-    return 100 - (100 / (1 + rs))
+    rs = avg_gain/avg_loss
+    return 100 - (100/(1+rs))
 
 # ───── Cooldown ─────
 def check_cooldown(sym, direction, idx):
     key = f"{sym}_{direction}"
-    if last_signals.get(key) == idx:
+    if last_signals.get(key)==idx:
         return False
-    last_signals[key] = idx
+    last_signals[key]=idx
     return True
 
 # ───── Signal Analysis ─────
 def analyze_symbol(sym, tf="15m"):
     global daily_signals
     df = get_data(tf, sym)
-    if df is None or len(df) < PIVOT_LOOKBACK*2+1:
+    if df is None or len(df)<PIVOT_LOOKBACK*2+1:
         return None
-    # Compute indicators
     df["EMA9"] = df["close"].ewm(span=EMA_LEN, adjust=False).mean()
     df["RSI"]  = rsi(df["close"], RSI_LEN)
     df["PH"]   = pivot_high(df, PIVOT_LOOKBACK)
     df["PL"]   = pivot_low(df, PIVOT_LOOKBACK)
 
-    # Use previous bar pivot flags
     prev = df.iloc[-2]
     last = df.iloc[-1]
     idx  = last.name
     entry = last["close"]
-    direction = None
-    ob_type = None
-    early = False
 
-    # Strict signal
-    if prev["PL"] and entry > last["EMA9"] and last["RSI"] > RSI_BUY_LVL:
-        direction, ob_type = "Long", "Bull OB"
-    elif prev["PH"] and entry < last["EMA9"] and last["RSI"] < RSI_SELL_LVL:
-        direction, ob_type = "Short", "Bear OB"
-    # Early signal
-    elif prev["PL"] and entry > last["EMA9"]:
+    direction = None
+    ob_type   = None
+    early     = False
+
+    # strict
+    if prev["PL"] and entry>last["EMA9"] and last["RSI"]>RSI_BUY_LVL:
+        direction, ob_type = "Long","Bull OB"
+    elif prev["PH"] and entry<last["EMA9"] and last["RSI"]<RSI_SELL_LVL:
+        direction, ob_type = "Short","Bear OB"
+    # early
+    elif prev["PL"] and entry>last["EMA9"]:
         early, ob_type = True, "Bull OB"
-    elif prev["PH"] and entry < last["EMA9"]:
+    elif prev["PH"] and entry<last["EMA9"]:
         early, ob_type = True, "Bear OB"
     else:
         return None
@@ -151,23 +147,22 @@ def analyze_symbol(sym, tf="15m"):
             f"🔍 Waiting RSI confirmation..."
         )
 
-    # Approximate ATR via true range rolling mean
-    tr = pd.concat([df['high'] - df['low'],
-                    (df['high'] - df['close'].shift()).abs(),
-                    (df['low'] - df['close'].shift()).abs()], axis=1).max(axis=1)
+    tr = pd.concat([df["high"]-df["low"],
+                    (df["high"]-df["close"].shift()).abs(),
+                    (df["low"]-df["close"].shift()).abs()],axis=1).max(axis=1)
     atr_val = tr.rolling(ATR_LEN).mean().iloc[-1]
 
-    if direction == "Long":
-        sl = entry - ATR_SL_MULT * atr_val
-        tp1 = entry + ATR_TP1_MULT * atr_val
-        tp2 = entry + ATR_TP2_MULT * atr_val
+    if direction=="Long":
+        sl = entry-ATR_SL_MULT*atr_val
+        tp1= entry+ATR_TP1_MULT*atr_val
+        tp2= entry+ATR_TP2_MULT*atr_val
     else:
-        sl = entry + ATR_SL_MULT * atr_val
-        tp1 = entry - ATR_TP1_MULT * atr_val
-        tp2 = entry - ATR_TP2_MULT * atr_val
+        sl = entry+ATR_SL_MULT*atr_val
+        tp1= entry-ATR_TP1_MULT*atr_val
+        tp2= entry-ATR_TP2_MULT*atr_val
 
-    open_positions[sym] = {"dir": direction, "sl": sl, "tp1": tp1, "tp2": tp2}
-    daily_signals += 1
+    open_positions[sym]={"dir":direction,"sl":sl,"tp1":tp1,"tp2":tp2}
+    daily_signals+=1
     return (
         f"🚨 *AI Signal Alert*\n"
         f"*Symbol:* `{sym}`\n"
@@ -183,38 +178,28 @@ def check_and_alert(sym):
     msg = analyze_symbol(sym, "15m")
     if msg:
         send_telegram(msg)
-        return msg
-    return None
+    return msg
 
 # ───── Position Monitoring ─────
 def monitor_positions():
-    global daily_wins, daily_losses
+    global daily_wins,daily_losses
     while True:
-        for sym, pos in list(open_positions.items()):
-            df = get_data("15m", sym)
-            if df is None:
-                continue
-            price = df["close"].iloc[-1]
-            if pos["dir"] == "Long":
-                if price >= pos["tp2"]:
-                    daily_wins += 1
-                    del open_positions[sym]
-                elif price <= pos["sl"]:
-                    daily_losses += 1
-                    del open_positions[sym]
+        for sym,pos in list(open_positions.items()):
+            df = get_data("15m",sym)
+            if df is None: continue
+            price=df["close"].iloc[-1]
+            if pos["dir"]=="Long":
+                if price>=pos["tp2"]: daily_wins+=1; del open_positions[sym]
+                elif price<=pos["sl"]: daily_losses+=1; del open_positions[sym]
             else:
-                if price <= pos["tp2"]:
-                    daily_wins += 1
-                    del open_positions[sym]
-                elif price >= pos["sl"]:
-                    daily_losses += 1
-                    del open_positions[sym]
+                if price<=pos["tp2"]: daily_wins+=1; del open_positions[sym]
+                elif price>=pos["sl"]: daily_losses+=1; del open_positions[sym]
         time.sleep(MONITOR_INT)
 
 # ───── Daily Report ─────
 def report_daily():
-    total = daily_wins + daily_losses
-    wr = round(daily_wins/total*100,1) if total>0 else 0
+    total=daily_wins+daily_losses
+    wr=round(daily_wins/total*100,1) if total>0 else 0
     send_telegram(
         f"📊 *Daily Report*\n"
         f"Signals: {daily_signals}\n"
@@ -228,45 +213,49 @@ def report_daily():
 def home():
     return "✅ Crypto Signal Bot is running."
 
-@app.route("/check", methods=["GET"] )
+@app.route("/check",methods=["GET"])
 def manual_check():
-    symbol = request.args.get("symbol", "ETHUSDT").upper()
-    result = check_and_alert(symbol)
-    return (result if result else f"No signal for {symbol}"), 200
+    sym=request.args.get("symbol","ETHUSDT").upper()
+    res=check_and_alert(sym)
+    return (res if res else f"No signal for {sym}"),200
 
 # ───── Main Monitor Loop ─────
 def monitor():
-    last_hb = 0
-    symbols = [
+    last_hb=0
+    symbols=[
         "BTCUSDT","ETHUSDT","DOGEUSDT","BNBUSDT","XRPUSDT",
-        "RENDERUSDT","TRUMPUSDT","FARTCOINUSDT","XLMUSDT",
+        "RENDERUSDT","TRUMPUSPTUSDT","FARTCOINUSDT","XLMUSDT",
         "SHIBUSDT","ADAUSDT","NOTUSDT","PROMUSDT","PENDLEUSDT",
         "CETUSUSDT","MAGICUSDT","SOLVUSDT","ENAUSDT",
     ]
     while True:
-        now = datetime.utcnow()
-        hr = (now.hour + 3) % 24
-        mn = now.minute
-        if SLEEP_HOURS[0] <= hr < SLEEP_HOURS[1]:
-            time.sleep(60)
-            continue
-        if time.time() - last_hb > HEARTBEAT_INT:
+        # sync to next 15-min candle close
+        now=datetime.utcnow()
+        mins=now.minute%15; secs=now.second
+        wait_sec=(15-mins)*60-secs+2
+        time.sleep(wait_sec)
+
+        # skip sleep hours
+        hr=(datetime.utcnow().hour+3)%24; mn=datetime.utcnow().minute
+        if SLEEP_HOURS[0]<=hr< SLEEP_HOURS[1]: continue
+
+        # heartbeat
+        if time.time()-last_hb>HEARTBEAT_INT:
             send_telegram("🤖 Bot live and scanning.")
-            last_hb = time.time()
-        threads = []
+            last_hb=time.time()
+
+        threads=[]
         for s in symbols:
-            t = threading.Thread(target=check_and_alert, args=(s,))
-            t.start()
-            threads.append(t)
-        for t in threads:
-            t.join()
-        if hr == 23 and mn >= 55:
-            report_daily()
-        time.sleep(CHECK_INT)
+            t=threading.Thread(target=check_and_alert,args=(s,))
+            t.start(); threads.append(t)
+        for t in threads: t.join()
+
+        # daily report
+        if hr==23 and mn>=55: report_daily()
 
 # ───── Main Operation ─────
 if __name__=="__main__":
-    threading.Thread(target=monitor_positions, daemon=True).start()
-    threading.Thread(target=monitor, daemon=True).start()
-    port = int(os.getenv("PORT", 8080))
-    app.run(host="0.0.0.0", port=port)
+    threading.Thread(target=monitor_positions,daemon=True).start()
+    threading.Thread(target=monitor,daemon=True).start()
+    port=int(os.getenv("PORT",8080))
+    app.run(host="0.0.0.0",port=port)
