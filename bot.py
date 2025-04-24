@@ -15,20 +15,20 @@ TELEGRAM_BOT_TOKEN    = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID      = os.getenv("TELEGRAM_CHAT_ID")
 
 # ───── Strategy Parameters ─────
-EMA_LEN         = 9
-ATR_LEN         = 14
-ATR_SL_MULT     = 1.2
-ATR_TP1_MULT    = 1.5
-ATR_TP2_MULT    = 2.5
-RSI_LEN         = 14
-RSI_BUY_LVL     = 30
-RSI_SELL_LVL    = 70
-PIVOT_LOOKBACK  = 5
-SIGNAL_COOLDOWN = 1800
-HEARTBEAT_INT   = 7200
-CHECK_INT       = 600
-MONITOR_INT     = 120
-SLEEP_HOURS     = (0, 7)
+EMA_LEN        = 9
+ATR_LEN        = 14
+ATR_SL_MULT    = 1.2
+ATR_TP1_MULT   = 1.5
+ATR_TP2_MULT   = 2.5
+RSI_LEN        = 14
+RSI_BUY_LVL    = 30
+RSI_SELL_LVL   = 70
+PIVOT_LOOKBACK = 5
+SIGNAL_COOLDOWN= 1800
+HEARTBEAT_INT  = 7200
+CHECK_INT      = 600
+MONITOR_INT    = 120
+SLEEP_HOURS    = (0, 7)
 
 # ───── Tracking ─────
 last_signals   = {}
@@ -37,7 +37,7 @@ daily_signals  = 0
 daily_wins     = 0
 daily_losses   = 0
 
-logging.basicConfig(level=logging.DEBUG, format="%(asctime)s %(levelname)-5s %(message)s")  # Set DEBUG level for detailed tracings %(levelname)-5s %(message)s")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-5s %(message)s")
 
 # ───── Telegram Sender ─────
 def send_telegram(msg: str):
@@ -52,43 +52,34 @@ def send_telegram(msg: str):
 
 # ───── Data Fetching ─────
 def get_data(tf: str, sym: str) -> pd.DataFrame:
-    """Fetch OHLCV data with debug logging."""
     agg = 5 if tf == "5m" else 15
     try:
-        response = requests.get(
+        res = requests.get(
             "https://min-api.cryptocompare.com/data/v2/histominute",
-            params={"fsym": sym[:-4], "tsym": "USDT", "limit": 100, "aggregate": agg, "api_key": CRYPTOCOMPARE_API_KEY},
+            params={"fsym": sym[:-4], "tsym": "USDT", "limit": 200, "aggregate": agg, "api_key": CRYPTOCOMPARE_API_KEY},
             timeout=10
-        )
-        j = response.json()
-        logging.debug(f"get_data raw response for {sym}: {j}")
-    except Exception as e:
-        logging.error(f"Request error for {sym}: {e}")
+        ).json()
+    except Exception:
         return None
-    if j.get("Response") != "Success":
-        logging.error(f"API error for {sym}: {j.get('Message')} ({j.get('Type')})")
+    if res.get("Response") != "Success":
         return None
-    raw = j.get("Data", {}).get("Data", [])
-    if not raw:
-        logging.error(f"No data points for {sym}")
+    data = res.get("Data", {}).get("Data", [])
+    if not data:
         return None
-    df = pd.DataFrame(raw)
+    df = pd.DataFrame(data)
     df["timestamp"] = pd.to_datetime(df["time"], unit="s")
     df.set_index("timestamp", inplace=True)
-    df[["open","high","low","close","vol"]] = df[["open","high","low","close","volumeto"]]
-    logging.debug(f"get_data prepared DataFrame for {sym}, length: {len(df)}")
-    return df
-
-# ───── Indicators ─────[["open","high","low","close","vol"]]
+    df.rename(columns={"volumeto": "vol"}, inplace=True)
+    return df[["open","high","low","close","vol"]]
 
 # ───── Indicators ─────
 def pivot_high(df, lb):
-    return df['high'].rolling(window=lb*2+1, center=True) \
-             .apply(lambda x: x.iloc[lb] == x.max()).fillna(False)
+    return df['high'].rolling(window=lb*2+1, center=True)
+            .apply(lambda x: x.iloc[lb] == x.max()).fillna(False)
 
 def pivot_low(df, lb):
-    return df['low'].rolling(window=lb*2+1, center=True) \
-             .apply(lambda x: x.iloc[lb] == x.min()).fillna(False)
+    return df['low'].rolling(window=lb*2+1, center=True)
+            .apply(lambda x: x.iloc[lb] == x.min()).fillna(False)
 
 def rsi(series, length):
     delta = series.diff()
@@ -108,130 +99,74 @@ def check_cooldown(sym, direction, idx):
     return True
 
 # ───── Signal Analysis ─────
-def analyze_symbol(sym, tf="15m"):  # Analyze with detailed debug
+def analyze_symbol(sym, tf="15m"):
     global daily_signals
-    logging.debug(f"Analyzing {sym} on timeframe {tf}")
     df = get_data(tf, sym)
-    if df is None or len(df) < PIVOT_LOOKBACK*2 + 5:
-        logging.debug(f"Not enough data for {sym}: {None if df is None else len(df)} rows")
+    if df is None or len(df) < PIVOT_LOOKBACK*2+1:
         return None
-    # Compute indicators
+    # Indicators
     df["EMA9"] = df["close"].ewm(span=EMA_LEN, adjust=False).mean()
     df["RSI"]  = rsi(df["close"], RSI_LEN)
     df["PH"]   = pivot_high(df, PIVOT_LOOKBACK)
     df["PL"]   = pivot_low(df, PIVOT_LOOKBACK)
-    # Log last values
+    # Last bars
     prev = df.iloc[-2]
     last = df.iloc[-1]
-    logging.debug(f"Prev bar for {sym}: PL={prev['PL']}, PH={prev['PH']}")
-    logging.debug(f"Last bar for {sym}: close={last['close']}, EMA9={last['EMA9']}, RSI={last['RSI']}")
     idx  = last.name
     entry = last["close"]
-    rsiVal = last["RSI"]
+    rsi_val = last["RSI"]
+    # Determine signal
     direction = None
     ob_type = None
-    accuracy = None
     early = False
-
-    # Normal Mode
-    if last["PL"] and entry > last["EMA9"] and rsiVal > RSI_BUY_LVL:
-        direction = "Long"; ob_type = "Bull OB"; accuracy = "🎯 Accuracy: High"
-        logging.debug(f"Normal LONG signal condition met for {sym}")
-    elif last["PH"] and entry < last["EMA9"] and rsiVal < RSI_SELL_LVL:
-        direction = "Short"; ob_type = "Bear OB"; accuracy = "🎯 Accuracy: High"
-        logging.debug(f"Normal SHORT signal condition met for {sym}")
-    # Smart Mode
-    elif prev["PL"] and entry > last["EMA9"] and RSI_BUY_LVL-2 < rsiVal <= RSI_BUY_LVL:
-        direction = "Long"; ob_type = "Bull OB"; accuracy = "⚠️ Accuracy: Medium"
-        logging.debug(f"Smart LONG signal condition met for {sym}")
-    elif prev["PH"] and entry < last["EMA9"] and RSI_SELL_LVL <= rsiVal < RSI_SELL_LVL+2:
-        direction = "Short"; ob_type = "Bear OB"; accuracy = "⚠️ Accuracy: Medium"
-        logging.debug(f"Smart SHORT signal condition met for {sym}")
-    # Early Signal
+    # Strict
+    if prev["PL"] and entry > last["EMA9"] and rsi_val > RSI_BUY_LVL:
+        direction, ob_type = "Long", "Bull OB"
+    elif prev["PH"] and entry < last["EMA9"] and rsi_val < RSI_SELL_LVL:
+        direction, ob_type = "Short", "Bear OB"
+    # Early
     elif prev["PL"] and entry > last["EMA9"]:
-        ob_type = "Bull OB"; early = True
-        logging.debug(f"Early LONG potential for {sym}")
+        early, ob_type = True, "Bull OB"
     elif prev["PH"] and entry < last["EMA9"]:
-        ob_type = "Bear OB"; early = True
-        logging.debug(f"Early SHORT potential for {sym}")
-    else:
-        logging.debug(f"No OB/EMA condition met for {sym}")
-        return None
-    global daily_signals
-    df = get_data(tf, sym)
-    if df is None or len(df) < PIVOT_LOOKBACK*2 + 5:
-        return None
-
-    df["EMA9"] = df["close"].ewm(span=EMA_LEN, adjust=False).mean()
-    df["RSI"]  = rsi(df["close"], RSI_LEN)
-    df["PH"]   = pivot_high(df, PIVOT_LOOKBACK)
-    df["PL"]   = pivot_low(df, PIVOT_LOOKBACK)
-
-    prev = df.iloc[-2]
-    last = df.iloc[-1]
-    idx  = df.index[-1]
-    entry = last["close"]
-    rsiVal = last["RSI"]
-
-    direction = None
-    ob_type = None
-    accuracy = None
-    early = False
-
-    # Normal Mode
-    if prev["PL"] and entry > last["EMA9"] and rsiVal > RSI_BUY_LVL:
-        direction = "Long"; ob_type = "Bull OB"; accuracy = "🎯 Accuracy: High"
-    elif prev["PH"] and entry < last["EMA9"] and rsiVal < RSI_SELL_LVL:
-        direction = "Short"; ob_type = "Bear OB"; accuracy = "🎯 Accuracy: High"
-    # Smart Mode
-    elif prev["PL"] and entry > last["EMA9"] and RSI_BUY_LVL-2 < rsiVal <= RSI_BUY_LVL:
-        direction = "Long"; ob_type = "Bull OB"; accuracy = "⚠️ Accuracy: Medium"
-    elif prev["PH"] and entry < last["EMA9"] and RSI_SELL_LVL <= rsiVal < RSI_SELL_LVL+2:
-        direction = "Short"; ob_type = "Bear OB"; accuracy = "⚠️ Accuracy: Medium"
-    # Early Signal
-    elif prev["PL"] and entry > last["EMA9"]:
-        ob_type = "Bull OB"; early = True
-    elif prev["PH"] and entry < last["EMA9"]:
-        ob_type = "Bear OB"; early = True
+        early, ob_type = True, "Bear OB"
     else:
         return None
-
+    # Cooldown
     if not check_cooldown(sym, direction or "early", idx):
         return None
-
+    # Early alert
     if early:
         return (
             f"🟡 *Early Signal Alert*\n"
             f"*Symbol:* `{sym}`\n"
             f"*Potential:* { '🟢 BUY' if ob_type=='Bull OB' else '🔴 SELL'}\n"
-            f"*Price:* `{entry:.6f}` | *RSI:* `{rsiVal:.2f}`\n"
+            f"*Price:* `{entry:.6f}` | *RSI:* `{rsi_val:.2f}`\n"
             f"*OB Type:* {ob_type}\n"
             f"🔍 Waiting RSI confirmation..."
         )
-
+    # Targets
     atr_val = df['high'].rolling(ATR_LEN).mean().iloc[-1]
     if direction == "Long":
-        sl = entry - atr_val*ATR_SL_MULT; tp1 = entry + atr_val*ATR_TP1_MULT; tp2 = entry + atr_val*ATR_TP2_MULT
+        sl = entry - ATR_SL_MULT*atr_val
+        tp1 = entry + ATR_TP1_MULT*atr_val
+        tp2 = entry + ATR_TP2_MULT*atr_val
     else:
-        sl = entry + atr_val*ATR_SL_MULT; tp1 = entry - atr_val*ATR_TP1_MULT; tp2 = entry - atr_val*ATR_TP2_MULT
-
+        sl = entry + ATR_SL_MULT*atr_val
+        tp1 = entry - ATR_TP1_MULT*atr_val
+        tp2 = entry - ATR_TP2_MULT*atr_val
     daily_signals += 1
-    msg = (
+    return (
         f"🚨 *AI Signal Alert*\n"
         f"*Symbol:* `{sym}`\n"
         f"*Signal:* { '🟢 BUY' if direction=='Long' else '🔴 SELL'}\n"
         f"*Type:* {ob_type}\n"
         f"*Price:* `{entry:.6f}`\n"
-        f"*SL:* `{sl:.6f}`  *TP1:* `{tp1:.6f}`  *TP2:* `{tp2:.6f}`\n"
-        f"*EMA9:* `{last['EMA9']:.4f}`  |  *RSI:* `{rsiVal:.2f}`\n"
-        f"{accuracy}\n"
-        f"*Strength:* 🔥🔥🔥"
+        f"*SL:* `{sl:.6f}`  *TP1:* `{tp1:.6f}`  *TP2:* `{tp2:.6f}`"
     )
-    open_positions[sym] = {"dir": direction, "sl": sl, "tp1": tp1, "tp2": tp2}
-    return msg
 
 # ───── Alert Routine ─────
 def check_and_alert(sym):
+    logging.info(f"🔍 Checking {sym} (15m only)...")
     msg = analyze_symbol(sym, "15m")
     if msg:
         send_telegram(msg)
@@ -246,8 +181,10 @@ def monitor_positions():
             df = get_data("15m", sym)
             if df is None: continue
             price = df["close"].iloc[-1]
-            if (pos["dir"]=="Long" and price>=pos["tp2"]) or (pos["dir"]=="Short" and price<=pos["tp2"]): daily_wins += 1; del open_positions[sym]
-            elif (pos["dir"]=="Long" and price<=pos["sl"]) or (pos["dir"]=="Short" and price>=pos["sl"]): daily_losses += 1; del open_positions[sym]
+            if (pos["dir"]=="Long" and price>=pos["tp2"]) or (pos["dir"]=="Short" and price<=pos["tp2"]):
+                daily_wins += 1; del open_positions[sym]
+            elif (pos["dir"]=="Long" and price<=pos["sl"]) or (pos["dir"]=="Short" and price>=pos["sl"]):
+                daily_losses += 1; del open_positions[sym]
         time.sleep(MONITOR_INT)
 
 # ───── Daily Report ─────
@@ -271,46 +208,27 @@ def home():
 def manual_check():
     symbol = request.args.get("symbol", "ETHUSDT").upper()
     result = check_and_alert(symbol)
-    if result:
-        return result, 200
-    return f"No signal for {symbol}", 200
+    return (result if result else f"No signal for {symbol}"), 200
 
 # ───── Main Monitor Loop ─────
 def monitor():
     last_hb = 0
-    symbols = [
-        "BTCUSDT","ETHUSDT","DOGEUSDT","BNBUSDT","XRPUSDT",
-        "RENDERUSDT","TRUMPUSDT","FARTCOINUSDT","XLMUSDT",
-        "SHIBUSDT","ADAUSDT","NOTUSDT","PROMUSDT","PENDLEUSDT"
-    ]
+    symbols = ["BTCUSDT","ETHUSDT","DOGEUSDT","BNBUSDT","XRPUSDT", "RENDERUSDT","TRUMPUSDT","FARTCOINUSDT","XLMUSDT","SHIBUSDT","ADAUSDT","NOTUSDT","PROMUSDT","PENDLEUSDT"]
     while True:
         now = datetime.utcnow()
-        hr = (now.hour + 3) % 24
-        mn = now.minute
-        # Sleep hours
-        if SLEEP_HOURS[0] <= hr < SLEEP_HOURS[1]:
-            time.sleep(60)
-            continue
-        # Heartbeat
-        if time.time() - last_hb > HEARTBEAT_INT:
-            send_telegram("🤖 Bot live and scanning.")
-            last_hb = time.time()
-        # Check symbols in parallel
+        hr, mn = (now.hour+3)%24, now.minute
+        if SLEEP_HOURS[0] <= hr < SLEEP_HOURS[1]: time.sleep(60); continue
+        if time.time()-last_hb > HEARTBEAT_INT: send_telegram("🤖 Bot live and scanning."); last_hb = time.time()
         threads = []
         for s in symbols:
             t = threading.Thread(target=check_and_alert, args=(s,))
-            t.start()
-            threads.append(t)
-        for t in threads:
-            t.join()
-        # Daily report at 23:55
-        if hr == 23 and mn >= 55:
-            report_daily()
+            t.start(); threads.append(t)
+        for t in threads: t.join()
+        if hr==23 and mn>=55: report_daily()
         time.sleep(CHECK_INT)
 
 # ───── Main Operation ─────
 if __name__=="__main__":
-    threading.Thread(target=lambda: [monitor_positions(), None][0], daemon=True).start()
-    threading.Thread(target=lambda: [monitor(), None][0], daemon=True).start()
-    port = int(os.getenv("PORT", 8080))
-    app.run(host="0.0.0.0", port=port)
+    threading.Thread(target=monitor_positions, daemon=True).start()
+    threading.Thread(target=monitor, daemon=True).start()
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT",8080)))
