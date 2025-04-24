@@ -39,7 +39,6 @@ daily_losses   = 0
 
 # ───── Logging ─────
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-5s %(message)s")
-# Suppress verbose HTTP logs
 logging.getLogger("urllib3").setLevel(logging.WARNING)
 logging.getLogger("requests").setLevel(logging.WARNING)
 
@@ -81,19 +80,13 @@ def get_data(tf: str, sym: str) -> pd.DataFrame:
 
 # ───── Indicators ─────
 def pivot_high(df, lb):
-    return (
-        df["high"]
-        .rolling(window=lb*2+1, center=True)
-        .apply(lambda x: x.iloc[lb] == x.max())
-        .fillna(False)
-    )
+    return df["high"].rolling(window=lb*2+1, center=True) \
+             .apply(lambda x: x.iloc[lb] == x.max()).fillna(False)
+
 def pivot_low(df, lb):
-    return (
-        df["low"]
-        .rolling(window=lb*2+1, center=True)
-        .apply(lambda x: x.iloc[lb] == x.min())
-        .fillna(False)
-    )
+    return df["low"].rolling(window=lb*2+1, center=True) \
+             .apply(lambda x: x.iloc[lb] == x.min()).fillna(False)
+
 def rsi(series, length):
     delta = series.diff()
     gain = delta.clip(lower=0)
@@ -122,50 +115,57 @@ def analyze_symbol(sym, tf="15m"):
     df["RSI"]  = rsi(df["close"], RSI_LEN)
     df["PH"]   = pivot_high(df, PIVOT_LOOKBACK)
     df["PL"]   = pivot_low(df, PIVOT_LOOKBACK)
-    # Last bar
+
+    # Use previous bar pivot flags
+    prev = df.iloc[-2]
     last = df.iloc[-1]
     idx  = last.name
     entry = last["close"]
-    ema9 = last["EMA9"]
-    rsi_val = last["RSI"]
     direction = None
     ob_type = None
     early = False
-    # Strict signal (match PineScript)
-    if last["PL"] and entry > ema9 and rsi_val > RSI_BUY_LVL:
+
+    # Strict signal
+    if prev["PL"] and entry > last["EMA9"] and last["RSI"] > RSI_BUY_LVL:
         direction, ob_type = "Long", "Bull OB"
-    elif last["PH"] and entry < ema9 and rsi_val < RSI_SELL_LVL:
+    elif prev["PH"] and entry < last["EMA9"] and last["RSI"] < RSI_SELL_LVL:
         direction, ob_type = "Short", "Bear OB"
     # Early signal
-    elif last["PL"] and entry > ema9:
+    elif prev["PL"] and entry > last["EMA9"]:
         early, ob_type = True, "Bull OB"
-    elif last["PH"] and entry < ema9:
+    elif prev["PH"] and entry < last["EMA9"]:
         early, ob_type = True, "Bear OB"
     else:
         return None
-    # Cooldown
+
     if not check_cooldown(sym, direction or "early", idx):
         return None
-    # Early alert
+
     if early:
         return (
             f"🟡 *Early Signal Alert*\n"
             f"*Symbol:* `{sym}`\n"
             f"*Potential:* {'🟢 BUY' if ob_type=='Bull OB' else '🔴 SELL'}\n"
-            f"*Price:* `{entry:.6f}` | *RSI:* `{rsi_val:.2f}`\n"
+            f"*Price:* `{entry:.6f}` | *RSI:* `{last['RSI']:.2f}`\n"
             f"*OB Type:* {ob_type}\n"
             f"🔍 Waiting RSI confirmation..."
         )
-    # Targets and register position
-    atr_val = df['high'].rolling(ATR_LEN).mean().iloc[-1]
+
+    # Approximate ATR via true range rolling mean
+    tr = pd.concat([df['high'] - df['low'],
+                    (df['high'] - df['close'].shift()).abs(),
+                    (df['low'] - df['close'].shift()).abs()], axis=1).max(axis=1)
+    atr_val = tr.rolling(ATR_LEN).mean().iloc[-1]
+
     if direction == "Long":
-        sl = entry - ATR_SL_MULT*atr_val
-        tp1 = entry + ATR_TP1_MULT*atr_val
-        tp2 = entry + ATR_TP2_MULT*atr_val
+        sl = entry - ATR_SL_MULT * atr_val
+        tp1 = entry + ATR_TP1_MULT * atr_val
+        tp2 = entry + ATR_TP2_MULT * atr_val
     else:
-        sl = entry + ATR_SL_MULT*atr_val
-        tp1 = entry - ATR_TP1_MULT*atr_val
-        tp2 = entry - ATR_TP2_MULT*atr_val
+        sl = entry + ATR_SL_MULT * atr_val
+        tp1 = entry - ATR_TP1_MULT * atr_val
+        tp2 = entry - ATR_TP2_MULT * atr_val
+
     open_positions[sym] = {"dir": direction, "sl": sl, "tp1": tp1, "tp2": tp2}
     daily_signals += 1
     return (
@@ -195,18 +195,20 @@ def monitor_positions():
             if df is None:
                 continue
             price = df["close"].iloc[-1]
-            if (pos["dir"] == "Long" and price >= pos["tp2"]):
-                daily_wins += 1
-                del open_positions[sym]
-            elif (pos["dir"] == "Short" and price <= pos["tp2"]):
-                daily_wins += 1
-                del open_positions[sym]
-            elif (pos["dir"] == "Long" and price <= pos["sl"]):
-                daily_losses += 1
-                del open_positions[sym]
-            elif (pos["dir"] == "Short" and price >= pos["sl"]):
-                daily_losses += 1
-                del open_positions[sym]
+            if pos["dir"] == "Long":
+                if price >= pos["tp2"]:
+                    daily_wins += 1
+                    del open_positions[sym]
+                elif price <= pos["sl"]:
+                    daily_losses += 1
+                    del open_positions[sym]
+            else:
+                if price <= pos["tp2"]:
+                    daily_wins += 1
+                    del open_positions[sym]
+                elif price >= pos["sl"]:
+                    daily_losses += 1
+                    del open_positions[sym]
         time.sleep(MONITOR_INT)
 
 # ───── Daily Report ─────
@@ -226,7 +228,7 @@ def report_daily():
 def home():
     return "✅ Crypto Signal Bot is running."
 
-@app.route("/check", methods=["GET"])
+@app.route("/check", methods=["GET"] )
 def manual_check():
     symbol = request.args.get("symbol", "ETHUSDT").upper()
     result = check_and_alert(symbol)
@@ -238,7 +240,7 @@ def monitor():
     symbols = [
         "BTCUSDT","ETHUSDT","DOGEUSDT","BNBUSDT","XRPUSDT",
         "RENDERUSDT","TRUMPUSDT","FARTCOINUSDT","XLMUSDT",
-        "SHIBUSDT","ADAUSDT","NOTUSDT","PROMUSMT","PENDLEUSDT"
+        "SHIBUSDT","ADAUSDT","NOTUSDT","PROMUSPTUSDT","PENDLEUSDT"
     ]
     while True:
         now = datetime.utcnow()
