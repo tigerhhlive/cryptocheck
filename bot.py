@@ -240,7 +240,8 @@ def monitor():
     symbols = [
         "BTCUSDT","ETHUSDT","DOGEUSDT","BNBUSDT","XRPUSDT",
         "RENDERUSDT","TRUMPUSDT","FARTCOINUSDT","XLMUSDT",
-        "SHIBUSDT","ADAUSDT","NOTUSDT","PROMPUSDT","PENDLEUSDT"
+        "SHIBUSDT","ADAUSDT","NOTUSDT","PROMUSDT","PENDLEUSDT",
+        "CETUSUSDT","MAGICUSDT","SOLVUSDT","ENAUSDT",
     ]
     while True:
         now = datetime.utcnow()
