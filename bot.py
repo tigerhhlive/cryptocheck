@@ -37,7 +37,11 @@ daily_signals  = 0
 daily_wins     = 0
 daily_losses   = 0
 
-logging.basicConfig(level=logging.DEBUG, format="%(asctime)s %(levelname)-5s %(message)s")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-5s %(message)s")
+# Suppress verbose HTTP connection logs
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+logging.getLogger("requests").setLevel(logging.WARNING)
+
 
 # ───── Telegram Sender ─────
 def send_telegram(msg: str):
