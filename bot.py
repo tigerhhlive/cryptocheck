@@ -155,7 +155,7 @@ def analyze_symbol(sym, tf="15m"):
             f"*OB Type:* {ob_type}\n"
             f"🔍 Waiting RSI confirmation..."
         )
-    # Target calculations
+    # Targets and tracking
     atr_val = df['high'].rolling(ATR_LEN).mean().iloc[-1]
     if direction == "Long":
         sl = entry - ATR_SL_MULT*atr_val
@@ -165,6 +165,8 @@ def analyze_symbol(sym, tf="15m"):
         sl = entry + ATR_SL_MULT*atr_val
         tp1 = entry - ATR_TP1_MULT*atr_val
         tp2 = entry - ATR_TP2_MULT*atr_val
+    # register open position
+    open_positions[sym] = {"dir": direction, "sl": sl, "tp1": tp1, "tp2": tp2}
     daily_signals += 1
     return (
         f"🚨 *AI Signal Alert*\n"
@@ -193,10 +195,16 @@ def monitor_positions():
             if df is None:
                 continue
             price = df["close"].iloc[-1]
-            if (pos["dir"]=="Long" and price>=pos["tp2"]) or (pos["dir"]=="Short" and price<=pos["tp2"]):
+            if (pos["dir"]) == "Long" and price >= pos["tp2"]:
                 daily_wins += 1
                 del open_positions[sym]
-            elif (pos["dir"]=="Long" and price<=pos["sl"]) or (pos["dir"]=="Short" and price>=pos["sl"]):
+            elif (pos["dir"]) == "Short" and price <= pos["tp2"]:
+                daily_wins += 1
+                del open_positions[sym]
+            elif (pos["dir"]) == "Long" and price <= pos["sl"]:
+                daily_losses += 1
+                del open_positions[sym]
+            elif (pos["dir"]) == "Short" and price >= pos["sl"]:
                 daily_losses += 1
                 del open_positions[sym]
         time.sleep(MONITOR_INT)
@@ -230,21 +238,18 @@ def monitor():
     symbols = [
         "BTCUSDT","ETHUSDT","DOGEUSDT","BNBUSDT","XRPUSDT",
         "RENDERUSDT","TRUMPUSDT","FARTCOINUSDT","XLMUSDT",
-        "SHIBUSDT","ADAUSDT","NOTUSDT","PROMUSDT","PENDLEUSDT"
+        "SHIBUSDT","ADAUSDT","NOTUSDT","PROMUSMT","PENDLEUSDT"
     ]
     while True:
         now = datetime.utcnow()
         hr = (now.hour + 3) % 24
         mn = now.minute
-        # Sleep hours
         if SLEEP_HOURS[0] <= hr < SLEEP_HOURS[1]:
             time.sleep(60)
             continue
-        # Heartbeat
         if time.time() - last_hb > HEARTBEAT_INT:
             send_telegram("🤖 Bot live and scanning.")
             last_hb = time.time()
-        # Check symbols
         threads = []
         for s in symbols:
             t = threading.Thread(target=check_and_alert, args=(s,))
@@ -252,7 +257,6 @@ def monitor():
             threads.append(t)
         for t in threads:
             t.join()
-        # Daily report at 23:55
         if hr == 23 and mn >= 55:
             report_daily()
         time.sleep(CHECK_INT)
